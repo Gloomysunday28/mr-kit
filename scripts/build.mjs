@@ -11,6 +11,12 @@ const buildEnv = {
     : process.env.PATH,
 };
 
+if (isMac && buildEnv.MR_KIT_ALLOW_UNSIGNED === "1") {
+  delete buildEnv.APPLE_CERTIFICATE;
+  delete buildEnv.APPLE_CERTIFICATE_PASSWORD;
+  delete buildEnv.APPLE_PROVIDER_SHORT_NAME;
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     stdio: options.capture ? "pipe" : "inherit",
@@ -57,22 +63,22 @@ function macSigningConfig() {
     return {};
   }
 
-  if (process.env.APPLE_CERTIFICATE) {
+  if (buildEnv.MR_KIT_ALLOW_UNSIGNED === "1") {
+    console.warn("MR_KIT_ALLOW_UNSIGNED=1，跳过 macOS 签名配置。");
+    return {};
+  }
+
+  if (buildEnv.APPLE_CERTIFICATE) {
     return {
       bundle: {
         macOS: {
           hardenedRuntime: true,
-          ...(process.env.APPLE_PROVIDER_SHORT_NAME
-            ? { providerShortName: process.env.APPLE_PROVIDER_SHORT_NAME }
+          ...(buildEnv.APPLE_PROVIDER_SHORT_NAME
+            ? { providerShortName: buildEnv.APPLE_PROVIDER_SHORT_NAME }
             : {}),
         },
       },
     };
-  }
-
-  if (process.env.MR_KIT_ALLOW_UNSIGNED === "1") {
-    console.warn("MR_KIT_ALLOW_UNSIGNED=1，跳过 macOS 签名配置。");
-    return {};
   }
 
   const identity = signingIdentity();

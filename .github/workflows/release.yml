@@ -46,7 +46,7 @@ jobs:
         run: npm ci
 
       - name: Import Apple certificate
-        if: env.APPLE_CERTIFICATE != ''
+        if: env.MR_KIT_ALLOW_UNSIGNED != '1' && env.APPLE_CERTIFICATE != ''
         env:
           KEYCHAIN_PASSWORD: ${{ github.run_id }}
         run: |
@@ -58,7 +58,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
 
       - name: Build app
-        run: npm run build -- --target ${{ matrix.target }}
+        run: npm run build -- --target ${{ matrix.target }} --no-sign
 
       - name: Prepare release asset
         run: |
