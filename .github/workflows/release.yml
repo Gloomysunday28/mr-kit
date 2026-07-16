@@ -11,7 +11,7 @@ permissions:
 jobs:
   build-macos:
     name: Build macOS ${{ matrix.arch }}
-    runs-on: macos-15
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
@@ -42,10 +42,8 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Select Xcode
-        run: |
-          sudo xcode-select -s /Applications/Xcode_16.4.app
-          xcodebuild -version
+      - name: Show Xcode version
+        run: xcodebuild -version
 
       - name: Install dependencies
         run: npm ci
