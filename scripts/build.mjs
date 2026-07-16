@@ -70,6 +70,11 @@ function macSigningConfig() {
     };
   }
 
+  if (process.env.MR_KIT_ALLOW_UNSIGNED === "1") {
+    console.warn("MR_KIT_ALLOW_UNSIGNED=1，跳过 macOS 签名配置。");
+    return {};
+  }
+
   const identity = signingIdentity();
   if (!identity) {
     console.error("未找到可用的 macOS 签名证书。");

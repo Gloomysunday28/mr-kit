@@ -39,6 +39,22 @@ npm run build
 
 macOS 打包会走签名脚本：优先使用 `MR_KIT_SIGNING_IDENTITY` / `APPLE_SIGNING_IDENTITY`，未设置时自动查找本机 `Developer ID Application` 证书。CI 可使用 `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD`。
 
+## Homebrew 安装
+
+```bash
+brew tap Gloomysunday28/mr-kit
+brew install --cask mr-kit
+```
+
+Homebrew cask 读取 GitHub Release 里的 dmg。发布新版本时，先同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和 `Casks/mr-kit.rb` 的版本号，然后推 tag：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+GitHub Actions 会自动打包 macOS `aarch64` / `x64` dmg 并挂到对应 Release。
+
 ## 使用流程
 
 1. 点「选择目录…」选中仓库（或自动恢复上次目录）

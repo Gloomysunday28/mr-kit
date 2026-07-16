@@ -663,12 +663,11 @@ function loadUpdateConfig() {
   try {
     const cfg = JSON.parse(localStorage.getItem("mrkit.update") || "{}");
     return {
-      endpoint: String(cfg.endpoint || "").trim(),
-      pubkey: String(cfg.pubkey || "").trim(),
+      cask: String(cfg.cask || "mr-kit").trim(),
       autoCheck: cfg.autoCheck !== false,
     };
   } catch {
-    return { endpoint: "", pubkey: "", autoCheck: true };
+    return { cask: "mr-kit", autoCheck: true };
   }
 }
 
@@ -816,8 +815,11 @@ function renderUpdateBanner() {
   if (!banner) return;
   banner.hidden = !state.updateInfo;
   if (!state.updateInfo) return;
-  $("update-title").textContent = `发现新版本 ${state.updateInfo.version}`;
-  $("update-notes").textContent = state.updateInfo.notes || `当前版本 ${state.updateInfo.currentVersion}`;
+  const latestVersion = state.updateInfo.current_version || state.updateInfo.currentVersion || state.updateInfo.version;
+  const installedVersion = state.updateInfo.version || "";
+  $("update-title").textContent = `发现新版本 ${latestVersion}`;
+  $("update-notes").textContent =
+    state.updateInfo.notes || (installedVersion ? `当前版本 ${installedVersion}` : "");
   $("btn-update-install").disabled = state.isInstallingUpdate;
   $("btn-update-install").textContent = state.isInstallingUpdate ? "升级中…" : "立即升级";
 }
@@ -825,9 +827,9 @@ function renderUpdateBanner() {
 async function checkForUpdates({ manual = false } = {}) {
   const cfg = loadUpdateConfig();
   const status = $("update-status");
-  if (!cfg.endpoint || !cfg.pubkey) {
+  if (!cfg.cask) {
     if (manual && status) {
-      status.textContent = "请先填写更新地址和公钥";
+      status.textContent = "请先填写 Cask 名称";
     }
     return null;
   }
@@ -835,18 +837,17 @@ async function checkForUpdates({ manual = false } = {}) {
   state.isCheckingUpdate = true;
   if (manual && status) status.textContent = "检查中…";
   try {
-    const update = await invoke("check_app_update", {
-      config: { endpoint: cfg.endpoint, pubkey: cfg.pubkey },
-    });
+    const update = await invoke("check_homebrew_update", { cask: cfg.cask });
     state.updateInfo = update;
     renderUpdateBanner();
     if (update) {
       const lastNotified = localStorage.getItem("mrkit.update.notifiedVersion");
-      if (manual || lastNotified !== update.version) {
-        await notifyUser("MR Kit：发现新版本", `${update.version} 可升级`);
-        localStorage.setItem("mrkit.update.notifiedVersion", update.version);
+      const latestVersion = update.current_version || update.currentVersion || update.version;
+      if (manual || lastNotified !== latestVersion) {
+        await notifyUser("MR Kit：发现新版本", `${latestVersion} 可升级`);
+        localStorage.setItem("mrkit.update.notifiedVersion", latestVersion);
       }
-      if (status) status.textContent = `发现 ${update.version}`;
+      if (status) status.textContent = `发现 ${latestVersion}`;
     } else if (manual && status) {
       status.textContent = "已经是最新版本";
     }
@@ -864,10 +865,15 @@ async function checkForUpdates({ manual = false } = {}) {
 
 async function installUpdate() {
   if (!state.updateInfo || state.isInstallingUpdate) return;
+  const cfg = loadUpdateConfig();
+  if (!cfg.cask) {
+    setError("请先填写 Cask 名称");
+    return;
+  }
   state.isInstallingUpdate = true;
   renderUpdateBanner();
   try {
-    await invoke("install_app_update");
+    await invoke("install_homebrew_update", { cask: cfg.cask });
   } catch (e) {
     setError(String(e));
     state.isInstallingUpdate = false;
@@ -888,8 +894,7 @@ function renderSettings() {
   $("custom-key").value = cfg.custom?.apiKey || "";
   $("custom-model").value = cfg.custom?.model || "";
   $("dingtalk-webhook").value = dingtalk.webhook || dingtalkDefaults.webhook || "";
-  $("update-endpoint").value = update.endpoint;
-  $("update-pubkey").value = update.pubkey;
+  $("update-cask").value = update.cask;
   $("btn-update-auto").textContent = update.autoCheck ? "开启" : "关闭";
   $("btn-update-auto").classList.toggle("selected", update.autoCheck);
   updateProviderFields();
@@ -929,8 +934,7 @@ function saveSettings() {
   );
   saveTargetBranches(parseTargetBranches($("target-branches").value));
   saveUpdateConfig({
-    endpoint: $("update-endpoint").value.trim(),
-    pubkey: $("update-pubkey").value.trim(),
+    cask: $("update-cask").value.trim(),
     autoCheck: $("btn-update-auto").classList.contains("selected"),
   });
   renderTargets();
