@@ -16,9 +16,10 @@ const CREATE_MR_SHORTCUT: &str = "CommandOrControl+Shift+Enter";
 const OPENAI_TITLE_MODEL: &str = "gpt-5.6-luna";
 const TRAY_ID: &str = "mr-kit-tray";
 const TARGET_BRANCHES: [&str; 3] = ["us-develop", "us-pre", "us-release"];
+const HOMEBREW_TAP: &str = "Gloomysunday28/mr-kit";
+const HOMEBREW_TAP_URL: &str = "https://github.com/Gloomysunday28/mr-kit.git";
 
 struct DesktopPin(Mutex<bool>);
-
 
 /// GUI 应用在 macOS 下不继承 shell PATH，补上 Homebrew 等常见路径，
 /// 否则打包后的 app 找不到 glab / git。
@@ -87,6 +88,60 @@ struct AppUpdateInfo {
     notes: String,
 }
 
+fn ensure_homebrew_tap() -> Result<(), String> {
+    let taps = run_cmd("brew", &["tap"], None)?;
+    if !taps.ok {
+        return Err(command_error("读取 Homebrew tap 失败", &taps));
+    }
+    let expected = HOMEBREW_TAP.to_lowercase();
+    if !taps
+        .stdout
+        .lines()
+        .any(|line| line.trim().eq_ignore_ascii_case(&expected))
+    {
+        let tap = run_cmd("brew", &["tap", HOMEBREW_TAP, HOMEBREW_TAP_URL], None)?;
+        if !tap.ok {
+            return Err(command_error("添加 Homebrew tap 失败", &tap));
+        }
+    }
+
+    let trust = run_cmd("brew", &["trust", HOMEBREW_TAP], None)?;
+    let trust_output = format!("{}\n{}", trust.stdout, trust.stderr);
+    if !trust.ok && !trust_output.contains("Unknown command") {
+        return Err(command_error("信任 Homebrew tap 失败", &trust));
+    }
+    Ok(())
+}
+
+fn installed_homebrew_cask_version(cask: &str) -> Result<Option<String>, String> {
+    let out = run_cmd("brew", &["list", "--cask", "--versions", cask], None)?;
+    if !out.ok || out.stdout.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(out
+        .stdout
+        .split_whitespace()
+        .nth(1)
+        .map(|version| version.to_string()))
+}
+
+fn homebrew_cask_current_version(cask: &str) -> Result<String, String> {
+    let info = run_cmd("brew", &["info", "--cask", "--json=v2", cask], None)?;
+    if !info.ok {
+        return Err(command_error("Homebrew cask 不可用", &info));
+    }
+    let json: serde_json::Value =
+        serde_json::from_str(&info.stdout).map_err(|e| format!("解析 Homebrew cask 失败：{e}"))?;
+    Ok(json
+        .get("casks")
+        .and_then(|v| v.as_array())
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("version"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string())
+}
+
 #[tauri::command]
 async fn check_homebrew_update(cask: String) -> Result<Option<AppUpdateInfo>, String> {
     let cask = cask.trim();
@@ -94,9 +149,17 @@ async fn check_homebrew_update(cask: String) -> Result<Option<AppUpdateInfo>, St
         return Err("Homebrew cask 名称不能为空".to_string());
     }
 
-    let info = run_cmd("brew", &["info", "--cask", "--json=v2", cask], None)?;
-    if !info.ok {
-        return Err(command_error("Homebrew cask 不可用", &info));
+    ensure_homebrew_tap()?;
+
+    let installed_version = installed_homebrew_cask_version(cask)?;
+    let current_info_version = homebrew_cask_current_version(cask)?;
+    if installed_version.is_none() {
+        return Ok(Some(AppUpdateInfo {
+            cask: cask.to_string(),
+            version: String::new(),
+            current_version: current_info_version,
+            notes: "可通过 Homebrew 安装".to_string(),
+        }));
     }
 
     let _ = run_cmd("brew", &["update", "--quiet"], None);
@@ -124,6 +187,7 @@ async fn check_homebrew_update(cask: String) -> Result<Option<AppUpdateInfo>, St
         .and_then(|v| v.as_array())
         .and_then(|items| items.first())
         .and_then(|v| v.as_str())
+        .or(installed_version.as_deref())
         .unwrap_or("")
         .to_string();
     Ok(Some(AppUpdateInfo {
@@ -140,9 +204,17 @@ async fn install_homebrew_update(app: AppHandle, cask: String) -> Result<(), Str
     if cask.is_empty() {
         return Err("Homebrew cask 名称不能为空".to_string());
     }
-    let out = run_cmd("brew", &["upgrade", "--cask", cask], None)?;
+    ensure_homebrew_tap()?;
+
+    let installed = installed_homebrew_cask_version(cask)?.is_some();
+    let args = if installed {
+        vec!["upgrade", "--cask", cask]
+    } else {
+        vec!["install", "--cask", "--force", cask]
+    };
+    let out = run_cmd("brew", &args, None)?;
     if !out.ok {
-        return Err(command_error("Homebrew 升级失败", &out));
+        return Err(command_error("Homebrew 安装或升级失败", &out));
     }
     app.restart();
 }

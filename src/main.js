@@ -817,11 +817,19 @@ function renderUpdateBanner() {
   if (!state.updateInfo) return;
   const latestVersion = state.updateInfo.current_version || state.updateInfo.currentVersion || state.updateInfo.version;
   const installedVersion = state.updateInfo.version || "";
-  $("update-title").textContent = `发现新版本 ${latestVersion}`;
+  $("update-title").textContent = installedVersion
+    ? `发现新版本 ${latestVersion}`
+    : `可安装 ${latestVersion}`;
   $("update-notes").textContent =
     state.updateInfo.notes || (installedVersion ? `当前版本 ${installedVersion}` : "");
   $("btn-update-install").disabled = state.isInstallingUpdate;
-  $("btn-update-install").textContent = state.isInstallingUpdate ? "升级中…" : "立即升级";
+  $("btn-update-install").textContent = state.isInstallingUpdate
+    ? installedVersion
+      ? "升级中…"
+      : "安装中…"
+    : installedVersion
+      ? "立即升级"
+      : "立即安装";
 }
 
 async function checkForUpdates({ manual = false } = {}) {
@@ -844,10 +852,10 @@ async function checkForUpdates({ manual = false } = {}) {
       const lastNotified = localStorage.getItem("mrkit.update.notifiedVersion");
       const latestVersion = update.current_version || update.currentVersion || update.version;
       if (manual || lastNotified !== latestVersion) {
-        await notifyUser("MR Kit：发现新版本", `${latestVersion} 可升级`);
+        await notifyUser("MR Kit：发现新版本", `${latestVersion} ${update.version ? "可升级" : "可安装"}`);
         localStorage.setItem("mrkit.update.notifiedVersion", latestVersion);
       }
-      if (status) status.textContent = `发现 ${latestVersion}`;
+      if (status) status.textContent = update.version ? `发现 ${latestVersion}` : `可安装 ${latestVersion}`;
     } else if (manual && status) {
       status.textContent = "已经是最新版本";
     }
