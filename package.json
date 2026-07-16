@@ -1,0 +1,15 @@
+{
+  "name": "mr-kit",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "vite src --host 127.0.0.1 --port 1420 --strictPort",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "vite": "^7.0.0"
+  }
+}

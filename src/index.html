@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      // 首帧前应用主题，避免启动闪屏
+      (() => {
+        const p = localStorage.getItem("mrkit.theme");
+        const light =
+          p === "light" ||
+          ((!p || p === "system") && matchMedia("(prefers-color-scheme: light)").matches);
+        document.documentElement.dataset.theme = light ? "light" : "dark";
+      })();
+    </script>
+    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MR Kit</title>
+    <script type="module" src="/main.js" defer></script>
+  </head>
+
+  <body>
+    <header class="topbar" data-tauri-drag-region>
+      <span class="wordmark" data-tauri-drag-region>MR&nbsp;KIT</span>
+      <span class="wordmark-sub" data-tauri-drag-region>DISPATCH</span>
+      <span id="glab-badge" class="lamp-status" data-tauri-drag-region><i class="lamp" data-tauri-drag-region></i>glab</span>
+      <button id="btn-pin-desktop" class="btn text" title="缩小为桌面小窗">缩小</button>
+      <button id="btn-settings" class="btn text" title="设置">设置</button>
+      <span class="kbd-hint" data-tauri-drag-region title="全局快捷键：唤起 / 隐藏窗口">⌘⇧M</span>
+    </header>
+
+    <canvas id="doodle-canvas" class="doodle-canvas" hidden></canvas>
+
+    <section id="update-banner" class="update-banner" hidden>
+      <div>
+        <b id="update-title">发现新版本</b>
+        <span id="update-notes"></span>
+      </div>
+      <button id="btn-update-install" class="btn primary">立即升级</button>
+      <button id="btn-update-dismiss" class="btn text">稍后</button>
+    </section>
+
+    <section id="compact-widget" class="compact-widget" hidden data-tauri-drag-region>
+      <div class="compact-head" data-tauri-drag-region>
+        <select id="compact-repo-select" class="compact-repo-select" title="切换目录"></select>
+        <span id="compact-repo-name" class="compact-repo-name" data-tauri-drag-region>未选择目录</span>
+        <button id="compact-expand" class="btn text" title="展开主界面">展开</button>
+        <button id="compact-hide" class="btn text" title="收起小窗">收起</button>
+      </div>
+      <div class="compact-meta" data-tauri-drag-region>
+        <span title="源分支">src <b id="compact-source">-</b></span>
+        <span title="当前分支">cur <b id="compact-branch">-</b></span>
+      </div>
+      <div id="compact-targets" class="compact-targets" data-tauri-drag-region></div>
+      <div class="compact-actions" data-tauri-drag-region>
+        <span id="compact-target-summary" class="compact-summary" data-tauri-drag-region></span>
+        <button id="compact-create" class="btn primary" disabled>发起 MR</button>
+      </div>
+    </section>
+
+    <!-- 空状态 -->
+    <section id="empty-state" class="empty" data-tauri-drag-region>
+      <p class="prompt-line" data-tauri-drag-region>$ 选择一个仓库开始<span class="cursor" data-tauri-drag-region></span></p>
+      <p class="empty-sub" data-tauri-drag-region>检测分支状态，把一个源分支派发到多个目标分支的 MR</p>
+      <button id="btn-pick-empty" class="btn primary">选择仓库</button>
+    </section>
+
+    <!-- 调度台 -->
+    <main id="workspace" class="board" hidden data-tauri-drag-region>
+
+      <!-- 状态行：shell prompt 风格 -->
+      <section class="zone statusline-zone" data-tauri-drag-region>
+        <div class="statusline" data-tauri-drag-region>
+          <select id="repo-select" class="repo-select" title="切换仓库"></select>
+          <span id="git-summary" class="segments" data-tauri-drag-region></span>
+          <span class="statusline-actions">
+            <button id="btn-add-repo" class="btn text" title="添加仓库到列表">添加</button>
+            <button id="btn-remove-repo" class="btn text" title="从列表移除当前仓库">移除</button>
+            <button id="btn-refresh" class="btn text" title="重新检测">刷新</button>
+            <button id="btn-fetch" class="btn text" title="git fetch --prune">fetch</button>
+          </span>
+        </div>
+        <ul id="changed-files" class="porcelain"></ul>
+      </section>
+
+      <!-- 通知与 MR 队列 -->
+      <section class="zone notify-zone" data-tauri-drag-region>
+        <div class="assignee-line">
+          <span class="assignee-label">值班人选择:</span>
+          <span id="dingtalk-contacts" class="dingtalk-contacts" title="钉钉通知联系人"></span>
+        </div>
+        <div class="open-mrs-line">
+          <span class="open-mrs-label">未合并 MR:</span>
+          <div id="branch-mrs" class="branch-mrs" title="当前分支未合并 MR"></div>
+        </div>
+      </section>
+
+      <!-- 派发图：源 → 目标 -->
+      <section class="zone" id="mr-card" data-tauri-drag-region>
+        <div class="graph" data-tauri-drag-region>
+          <div class="graph-root" data-tauri-drag-region>
+            <span class="glyph">⎇</span>
+            <select id="source-branch" title="源分支"></select>
+            <span class="root-note" data-tauri-drag-region>源分支</span>
+          </div>
+
+          <div id="target-rails" class="rails" data-tauri-drag-region></div>
+        </div>
+
+        <div class="titlerow" data-tauri-drag-region>
+          <input id="mr-title" placeholder="MR 标题" spellcheck="false" />
+          <button id="btn-ai-title" class="btn" title="调用 AI 根据暂存区改动总结标题">AI 标题</button>
+        </div>
+
+        <ul id="commit-preview" class="commits"></ul>
+
+        <div class="dispatch-row" data-tauri-drag-region>
+          <button id="btn-create" class="btn primary wide" disabled>发起 MR</button>
+          <span id="create-status" class="dim"></span>
+        </div>
+      </section>
+
+      <!-- 结果：终端 transcript -->
+      <section class="zone transcript-zone" data-tauri-drag-region>
+        <ul id="mr-results" class="transcript"></ul>
+        <p id="global-error" class="errorline"></p>
+      </section>
+
+    </main>
+
+    <!-- 设置页 -->
+    <section id="settings" class="settings" hidden data-tauri-drag-region>
+      <div class="settings-shell" data-tauri-drag-region>
+        <aside class="settings-sidebar" data-tauri-drag-region>
+          <div class="settings-head" data-tauri-drag-region>
+            <span class="settings-title" data-tauri-drag-region>设置</span>
+            <button id="btn-settings-close" class="btn text">← 返回</button>
+          </div>
+          <nav class="settings-nav" aria-label="设置菜单">
+            <button class="settings-nav-item selected" data-settings-page="general">
+              <span>通用</span>
+              <small>外观与偏好</small>
+            </button>
+            <button class="settings-nav-item" data-settings-page="ai">
+              <span>AI 渠道</span>
+              <small>标题生成来源</small>
+            </button>
+            <button class="settings-nav-item" data-settings-page="dingtalk">
+              <span>钉钉</span>
+              <small>MR 通知</small>
+            </button>
+            <button class="settings-nav-item" data-settings-page="update">
+              <span>更新</span>
+              <small>自动升级</small>
+            </button>
+          </nav>
+        </aside>
+
+        <div class="settings-content">
+          <section class="settings-page" data-settings-panel="general">
+            <div class="settings-page-head">
+              <div class="settings-sub" data-tauri-drag-region>通用</div>
+              <p>调整 MR Kit 的显示偏好。</p>
+            </div>
+            <div class="settings-group">
+              <div class="settings-group-title">界面</div>
+              <div class="form-row">
+                <label>外观</label>
+                <div class="theme-seg">
+                  <button class="btn" data-theme-value="system">跟随系统</button>
+                  <button class="btn" data-theme-value="dark">暗色</button>
+                  <button class="btn" data-theme-value="light">亮色</button>
+                </div>
+              </div>
+              <div class="form-row">
+                <label>皮肤</label>
+                <div class="skin-seg">
+                  <button class="skin-chip" data-skin-value="amber"><i style="background:#b26f14"></i>琥珀</button>
+                  <button class="skin-chip" data-skin-value="jade"><i style="background:#2f8a63"></i>青绿</button>
+                  <button class="skin-chip" data-skin-value="blue"><i style="background:#3f72c5"></i>蓝色</button>
+                  <button class="skin-chip" data-skin-value="rose"><i style="background:#bd4b6b"></i>玫红</button>
+                </div>
+              </div>
+              <div class="form-row">
+                <label>涂鸦</label>
+                <div class="doodle-controls">
+                  <button id="btn-doodle-toggle" class="btn">开启</button>
+                  <button class="doodle-swatch" data-doodle-color="#ffb454" style="background:#ffb454" title="琥珀"></button>
+                  <button class="doodle-swatch" data-doodle-color="#86d996" style="background:#86d996" title="绿色"></button>
+                  <button class="doodle-swatch" data-doodle-color="#7aa2ff" style="background:#7aa2ff" title="蓝色"></button>
+                  <button class="doodle-swatch" data-doodle-color="#e5766a" style="background:#e5766a" title="红色"></button>
+                  <button id="btn-doodle-clear" class="btn">清空</button>
+                </div>
+              </div>
+            </div>
+            <div class="settings-group">
+              <div class="settings-group-title">MR</div>
+              <div class="form-row align-start">
+                <label for="target-branches">目标分支</label>
+                <textarea id="target-branches" class="target-branches-input" spellcheck="false"></textarea>
+              </div>
+            </div>
+            <div class="form-row settings-actions indent-actions">
+              <button id="btn-general-save" class="btn primary">保存</button>
+              <span id="general-status" class="dim"></span>
+            </div>
+          </section>
+
+          <section class="settings-page" data-settings-panel="ai" hidden>
+            <div class="settings-page-head">
+              <div class="settings-sub" data-tauri-drag-region>AI 渠道</div>
+              <p>Claude 和 Codex 直接复用本机登录配置。</p>
+            </div>
+
+            <div class="form-row">
+              <label for="ai-provider">渠道</label>
+              <select id="ai-provider">
+                <option value="claude">Claude</option>
+                <option value="openai">Codex</option>
+                <option value="custom">自定义</option>
+              </select>
+            </div>
+
+            <div class="provider-fields provider-auto" data-provider="claude">
+              <span class="provider-mark">C</span>
+              <div>
+                <b>自动读取 ~/.claude</b>
+                <p>无需填写 API Key 或模型，使用 Claude Code 当前配置。</p>
+              </div>
+            </div>
+
+            <div class="provider-fields provider-auto" data-provider="openai" hidden>
+              <span class="provider-mark">X</span>
+              <div>
+                <b>自动读取 ~/.codex</b>
+                <p>使用 Codex 登录态，固定快速模型与轻量推理生成标题。</p>
+              </div>
+            </div>
+
+            <div class="provider-fields provider-custom" data-provider="custom" hidden>
+              <div class="form-row">
+                <label for="custom-base">Base URL</label>
+                <input id="custom-base" placeholder="https://example.com/v1（OpenAI 兼容格式）" spellcheck="false" />
+              </div>
+              <div class="form-row">
+                <label for="custom-key">API Key</label>
+                <input id="custom-key" type="password" placeholder="访问密钥" spellcheck="false" />
+              </div>
+              <div class="form-row">
+                <label for="custom-model">模型</label>
+                <input id="custom-model" placeholder="模型 ID" spellcheck="false" />
+              </div>
+            </div>
+
+            <div class="form-row settings-actions">
+              <button id="btn-settings-save" class="btn primary">保存</button>
+              <span id="settings-status" class="dim"></span>
+            </div>
+          </section>
+
+          <section class="settings-page" data-settings-panel="dingtalk" hidden>
+            <div class="settings-page-head">
+              <div class="settings-sub" data-tauri-drag-region>钉钉审批</div>
+              <p>非 us-develop MR 创建成功后通知当前选择的值班人。</p>
+            </div>
+
+            <div class="form-row">
+              <label for="dingtalk-webhook">Webhook</label>
+              <input id="dingtalk-webhook" type="password" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." spellcheck="false" />
+            </div>
+            <div class="form-row settings-actions">
+              <button id="btn-dingtalk-save" class="btn primary">保存</button>
+              <span id="dingtalk-status" class="dim"></span>
+            </div>
+          </section>
+
+          <section class="settings-page" data-settings-panel="update" hidden>
+            <div class="settings-page-head">
+              <div class="settings-sub" data-tauri-drag-region>自动更新</div>
+              <p>通过 Homebrew cask 检查和安装更新。</p>
+            </div>
+            <div class="form-row">
+              <label for="update-cask">Cask 名称</label>
+              <input id="update-cask" placeholder="mr-kit" spellcheck="false" />
+            </div>
+            <div class="form-row inline-row">
+              <label>自动检查</label>
+              <button id="btn-update-auto" class="btn">开启</button>
+              <button id="btn-update-check" class="btn">立即检查</button>
+            </div>
+            <div class="form-row settings-actions">
+              <button id="btn-update-save" class="btn primary">保存</button>
+              <span id="update-status" class="dim"></span>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+  </body>
+</html>
