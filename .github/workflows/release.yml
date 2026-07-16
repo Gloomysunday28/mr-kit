@@ -11,7 +11,7 @@ permissions:
 jobs:
   build-macos:
     name: Build macOS ${{ matrix.arch }}
-    runs-on: macos-latest
+    runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
@@ -41,6 +41,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app
+          xcodebuild -version
 
       - name: Install dependencies
         run: npm ci
