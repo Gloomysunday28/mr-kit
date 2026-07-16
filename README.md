@@ -42,7 +42,8 @@ macOS 打包会走签名脚本：优先使用 `MR_KIT_SIGNING_IDENTITY` / `APPLE
 ## Homebrew 安装
 
 ```bash
-brew tap Gloomysunday28/mr-kit
+brew tap Gloomysunday28/mr-kit https://github.com/Gloomysunday28/mr-kit.git
+brew trust Gloomysunday28/mr-kit
 brew install --cask mr-kit
 ```
 
