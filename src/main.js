@@ -92,6 +92,7 @@ document.addEventListener("mousedown", (e) => {
 
 const state = {
   dir: null,
+  watchedDir: null,
   info: null,
   targetBranches: loadTargetBranches(),
   targets: new Set(),
@@ -302,7 +303,7 @@ function renderDingtalkContacts() {
     const selected = state.dingtalkRecipients.has(contact.userId);
     return `<button class="contact-chip ${selected ? "selected" : ""}" data-dingtalk-user="${esc(contact.userId)}" title="${esc(contact.userId)}">${esc(contact.name)}</button>`;
   }).join("");
-  holder.classList.toggle("empty", state.dingtalkRecipients.size === 0);
+  holder.classList.toggle("none-selected", state.dingtalkRecipients.size === 0);
 }
 
 function toggleDingtalkContact(userId) {
@@ -453,6 +454,7 @@ async function refresh() {
   $("empty-state").hidden = true;
   $("workspace").hidden = false;
   renderRepoSelect();
+  watchRepo();
 
   let info;
   try {
@@ -507,6 +509,13 @@ async function refresh() {
   renderTargets();
   syncTrayContext();
   checkGlab();
+}
+
+/* 监听仓库 HEAD/stash：在终端里 checkout 或 stash 后界面自动刷新 */
+function watchRepo() {
+  if (!state.dir || state.watchedDir === state.dir) return;
+  state.watchedDir = state.dir;
+  invoke("watch_repo", { path: state.dir }).catch(() => {});
 }
 
 async function loadBranches(current) {
@@ -1372,6 +1381,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (dir) switchRepo(dir);
   });
   listen("mrkit:toggle-target", (event) => toggleTargetByName(String(event.payload || "")));
+  listen("mrkit:repo-changed", () => {
+    // 创建 MR 过程中不打断；结束后下一次变化仍会触发
+    if (!state.isCreating) refresh();
+  });
   listen("mrkit:create-mr", () => createMrs());
   listen("mrkit:desktop-pin-state", (event) => {
     state.desktopPinned = Boolean(event.payload);

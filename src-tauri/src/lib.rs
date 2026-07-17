@@ -3,8 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Size};
@@ -284,6 +285,73 @@ async fn git_info(path: String) -> Result<GitInfo, String> {
     }
 
     Ok(info)
+}
+
+/// 定位仓库的 git 目录；`.git` 是文件时（worktree/submodule）解析 gitdir 指向。
+fn repo_git_dir(repo: &Path) -> Option<PathBuf> {
+    let dot_git = repo.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    let text = fs::read_to_string(&dot_git).ok()?;
+    let gitdir = text.strip_prefix("gitdir:")?.trim();
+    let gitdir = Path::new(gitdir);
+    Some(if gitdir.is_absolute() {
+        gitdir.to_path_buf()
+    } else {
+        repo.join(gitdir)
+    })
+}
+
+/// linked worktree 的 git 目录里有 commondir 文件，refs/stash 存在公共目录。
+fn repo_common_dir(git_dir: &Path) -> PathBuf {
+    match fs::read_to_string(git_dir.join("commondir")) {
+        Ok(text) => {
+            let p = Path::new(text.trim());
+            if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                git_dir.join(p)
+            }
+        }
+        Err(_) => git_dir.to_path_buf(),
+    }
+}
+
+/// 仓库状态快照：HEAD 内容（分支切换）+ stash ref 与其 reflog 元信息
+/// （stash push/pop/drop 都会动其中至少一个）。快照变化即通知前端刷新。
+fn repo_watch_snapshot(repo: &Path) -> Option<String> {
+    let git_dir = repo_git_dir(repo)?;
+    let common = repo_common_dir(&git_dir);
+    let head = fs::read_to_string(git_dir.join("HEAD")).unwrap_or_default();
+    let stash_ref = fs::read_to_string(common.join("refs/stash")).unwrap_or_default();
+    let stash_log = fs::metadata(common.join("logs/refs/stash"))
+        .map(|m| format!("{}@{:?}", m.len(), m.modified().ok()))
+        .unwrap_or_default();
+    Some(format!("{head}\x1f{stash_ref}\x1f{stash_log}"))
+}
+
+static REPO_WATCH_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// 轮询仓库状态快照（HEAD / stash），变化时通知前端刷新。
+/// 再次调用会替换旧的监听（用于切换仓库）。
+#[tauri::command]
+async fn watch_repo(app: AppHandle, path: String) -> Result<(), String> {
+    let generation = REPO_WATCH_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    std::thread::spawn(move || {
+        let repo = PathBuf::from(&path);
+        let mut last: Option<String> = None;
+        while REPO_WATCH_GENERATION.load(Ordering::SeqCst) == generation {
+            if let Some(snapshot) = repo_watch_snapshot(&repo) {
+                if last.as_deref().is_some_and(|prev| prev != snapshot) {
+                    let _ = app.emit("mrkit:repo-changed", ());
+                }
+                last = Some(snapshot);
+            }
+            std::thread::sleep(Duration::from_millis(1200));
+        }
+    });
+    Ok(())
 }
 
 #[tauri::command]
@@ -1511,6 +1579,7 @@ pub fn run() {
             install_homebrew_update,
             pick_directory,
             git_info,
+            watch_repo,
             list_branches,
             git_fetch,
             commits_between,

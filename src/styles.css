@@ -75,6 +75,7 @@ body {
   color: var(--ink);
   font: 12.5px/1.6 var(--mono);
   -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none; /* WKWebView 只认带前缀写法 */
   user-select: none;
   cursor: default;
   overflow-x: hidden;
@@ -99,7 +100,8 @@ body.doodle-enabled .doodle-canvas {
   background-size: 28px 28px;
 }
 
-input, select, code, pre { user-select: text; }
+/* 仅输入类控件可选中文本，其余内容一律 select-none */
+input, textarea { -webkit-user-select: text; user-select: text; }
 ::selection { background: var(--signal-dim); }
 
 button { font: inherit; color: inherit; background: none; border: none; padding: 0; }
