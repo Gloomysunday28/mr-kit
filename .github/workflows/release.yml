@@ -13,36 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  clear-release-assets:
-    name: Clear existing release assets
-    runs-on: ubuntu-latest
-    steps:
-      - name: Delete old dmg assets
-        uses: actions/github-script@v7
-        with:
-          script: |
-            try {
-              const release = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: context.ref.replace('refs/tags/', ''),
-              });
-              for (const asset of release.data.assets) {
-                if (/^MR-Kit_.*_(aarch64|x64)\.dmg$/.test(asset.name)) {
-                  await github.rest.repos.deleteReleaseAsset({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    asset_id: asset.id,
-                  });
-                }
-              }
-            } catch (error) {
-              if (error.status !== 404) throw error;
-            }
-
   build-macos:
     name: Build macOS ${{ matrix.arch }}
-    needs: clear-release-assets
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -57,6 +29,9 @@ jobs:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
       APPLE_PROVIDER_SHORT_NAME: ${{ secrets.APPLE_PROVIDER_SHORT_NAME }}
 
     steps:
@@ -107,12 +82,31 @@ jobs:
           fi
           echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
 
-      - name: Build app
+      - name: Prepare notarization credentials
         run: |
-          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
-            echo "APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID secrets are required for notarization." >&2
+          has_apple_id=false
+          has_api_key=false
+
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            has_apple_id=true
+          fi
+
+          if [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_ISSUER" ] && [ -n "$APPLE_API_KEY_P8" ]; then
+            has_api_key=true
+            mkdir -p private_keys
+            key_path="$PWD/private_keys/AuthKey_${APPLE_API_KEY}.p8"
+            printf '%s\n' "$APPLE_API_KEY_P8" | perl -pe 's/\\n/\n/g' > "$key_path"
+            chmod 600 "$key_path"
+            echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+          fi
+
+          if [ "$has_apple_id" != true ] && [ "$has_api_key" != true ]; then
+            echo "Notarization requires either APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID or APPLE_API_KEY / APPLE_API_ISSUER / APPLE_API_KEY_P8 secrets." >&2
             exit 1
           fi
+
+      - name: Build app
+        run: |
           npm run build -- --target ${{ matrix.target }}
 
       - name: Verify signed and notarized app
@@ -140,6 +134,48 @@ jobs:
             exit 1
           fi
           cp "$dmg" "release-assets/MR-Kit_${version}_${{ matrix.arch }}.dmg"
+
+      - name: Upload release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dmg-${{ matrix.arch }}
+          path: release-assets/*.dmg
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub release
+    needs: build-macos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-dmg-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Delete old dmg assets
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: context.ref.replace('refs/tags/', ''),
+              });
+              for (const asset of release.data.assets) {
+                if (/^MR-Kit_.*_(aarch64|x64)\.dmg$/.test(asset.name)) {
+                  await github.rest.repos.deleteReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    asset_id: asset.id,
+                  });
+                }
+              }
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2

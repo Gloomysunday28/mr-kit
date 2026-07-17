@@ -47,7 +47,32 @@ brew trust Gloomysunday28/mr-kit
 brew install --cask mr-kit
 ```
 
-Homebrew cask 读取 GitHub Release 里的 dmg。CI 会使用 Developer ID 证书签名并公证 macOS 包，避免下载后被 Gatekeeper 提示移到废纸篓。发布前需要配置 GitHub Secrets：`APPLE_CERTIFICATE`、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_ID`、`APPLE_PASSWORD`、`APPLE_TEAM_ID`，可选 `APPLE_PROVIDER_SHORT_NAME`。
+Homebrew cask 读取 GitHub Release 里的 dmg。CI 会使用 Developer ID 证书签名并公证 macOS 包，避免下载后被 Gatekeeper 提示移到废纸篓。
+
+发布前先准备 Apple Developer 的 `Developer ID Application` `.p12` 证书，并配置 GitHub Secrets。支持 Apple ID app-specific password：
+
+```bash
+brew install gh
+gh auth login
+
+APPLE_CERTIFICATE_PATH=/path/to/developer-id-application.p12 \
+APPLE_CERTIFICATE_PASSWORD="p12-export-password" \
+APPLE_ID="apple-id@example.com" \
+APPLE_PASSWORD="app-specific-password" \
+APPLE_TEAM_ID="TEAMID12345" \
+npm run release:secrets
+```
+
+也支持 App Store Connect API Key：
+
+```bash
+APPLE_CERTIFICATE_PATH=/path/to/developer-id-application.p12 \
+APPLE_CERTIFICATE_PASSWORD="p12-export-password" \
+APPLE_API_KEY="KEYID12345" \
+APPLE_API_ISSUER="issuer-uuid" \
+APPLE_API_KEY_P8_PATH=/path/to/AuthKey_KEYID12345.p8 \
+npm run release:secrets
+```
 
 发布新版本时，先同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和 `Casks/mr-kit.rb` 的版本号，然后推 tag：
 
