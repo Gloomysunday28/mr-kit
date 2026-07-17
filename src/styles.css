@@ -163,16 +163,6 @@ button { font: inherit; color: inherit; background: none; border: none; padding:
   color: var(--ink);
 }
 
-.home-test-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-left: 9px;
-  border-radius: 999px;
-  background: var(--signal);
-  box-shadow: 0 0 12px var(--signal);
-}
-
 .update-pill {
   display: inline-flex;
   align-items: center;
