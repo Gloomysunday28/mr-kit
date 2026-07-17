@@ -126,6 +126,10 @@ button { font: inherit; color: inherit; background: none; border: none; padding:
   min-width: 0;
 }
 
+.topbar-left {
+  gap: 10px;
+}
+
 .topbar-right {
   justify-content: flex-end;
   gap: 14px;
@@ -161,6 +165,16 @@ button { font: inherit; color: inherit; background: none; border: none; padding:
   font: 600 13px/1 var(--signage);
   letter-spacing: 2.5px;
   color: var(--ink);
+}
+
+.home-webui-badge {
+  padding: 2px 7px;
+  border: 1px solid var(--signal);
+  border-radius: 4px;
+  color: var(--signal);
+  background: var(--signal-dim);
+  font: 10.5px var(--mono);
+  white-space: nowrap;
 }
 
 .update-pill {
