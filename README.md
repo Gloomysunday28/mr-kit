@@ -79,8 +79,8 @@ npm run release:secrets
 发布新版本时，先同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 的版本号（**不要手动改 `Casks/mr-kit.rb`**），然后推 tag：
 
 ```bash
-git tag v0.10.0
-git push origin v0.10.0
+git tag v0.11.0
+git push origin v0.11.0
 ```
 
 GitHub Actions 会自动打包 macOS `aarch64` / `x64` dmg 并挂到对应 Release，随后由 CI 更新 `Casks/mr-kit.rb` 的版本号并推回 main——cask 必须在安装包就绪后才更新，否则客户端会在 dmg 存在前收到升级提示。
