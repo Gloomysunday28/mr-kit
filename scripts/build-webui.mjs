@@ -60,12 +60,21 @@ const sha256 = createHash("sha256").update(html, "utf8").digest("hex");
 
 mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, "webui.html"), html);
+const manifest = {
+  version,
+  sha256,
+  minAppVersion: compat.minAppVersion,
+  ...(compat.maxAppVersion ? { maxAppVersion: compat.maxAppVersion } : {}),
+};
 writeFileSync(
   join(outDir, "webui.json"),
-  JSON.stringify({ version, sha256, minAppVersion: compat.minAppVersion }, null, 2) + "\n",
+  JSON.stringify(manifest, null, 2) + "\n",
 );
 
 console.log(`webui ${version}`);
 console.log(`  minAppVersion ${compat.minAppVersion}`);
+if (compat.maxAppVersion) {
+  console.log(`  maxAppVersion ${compat.maxAppVersion}`);
+}
 console.log(`  sha256 ${sha256}`);
 console.log(`  ${join(outDir, "webui.html")} (${(html.length / 1024).toFixed(1)} KB)`);

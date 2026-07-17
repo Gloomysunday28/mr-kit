@@ -110,6 +110,8 @@ const state = {
   isCheckingUpdate: false,
   isInstallingUpdate: false,
   webuiPending: null,
+  webuiProgress: null,
+  isCheckingWebui: false,
 };
 
 /* ---------- 工具 ---------- */
@@ -941,22 +943,40 @@ async function installUpdate() {
 /* ---------- 界面热更新 ---------- */
 
 async function checkWebuiUpdate() {
-  if (state.webuiPending) return;
+  if (state.webuiPending || state.isCheckingWebui) return;
+  state.isCheckingWebui = true;
   try {
     const version = await invoke("check_webui_update");
     if (version) {
       state.webuiPending = version;
+      state.webuiProgress = null;
       renderWebuiPill();
     }
   } catch {
     // 静默失败，下个周期再试；手动入口在设置页
+    state.webuiProgress = null;
+    renderWebuiPill();
+  } finally {
+    state.isCheckingWebui = false;
   }
 }
 
 function renderWebuiPill() {
   const pill = $("topbar-webui");
   if (!pill) return;
-  pill.hidden = !state.webuiPending;
+  const progress = state.webuiProgress;
+  pill.classList.toggle("webui-progress", Boolean(progress && !state.webuiPending));
+  pill.hidden = !state.webuiPending && !progress;
+  if (progress && !state.webuiPending) {
+    const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
+    pill.innerHTML = `
+      <span class="webui-progress-label">安装热更</span>
+      <span class="webui-progress-track"><i style="width:${percent}%"></i></span>
+      <span class="webui-progress-value">${percent}%</span>
+    `;
+    pill.title = `正在安装界面热更新 ${progress.version || ""}`;
+    return;
+  }
   if (state.webuiPending) {
     pill.textContent = "界面已更新";
     pill.title = `新界面 ${state.webuiPending} 已就绪，点击立即生效`;
@@ -1362,7 +1382,9 @@ async function bootApp() {
     }
   });
   $("btn-update-install").addEventListener("click", installUpdate);
-  $("topbar-webui").addEventListener("click", () => location.reload());
+  $("topbar-webui").addEventListener("click", () => {
+    if (state.webuiPending) location.reload();
+  });
   $("btn-webui-reset").addEventListener("click", resetWebui);
   $("btn-update-dismiss").addEventListener("click", () => {
     state.updateInfo = null;
@@ -1440,6 +1462,15 @@ async function bootApp() {
     localStorage.setItem("mrkit.desktopPinned", state.desktopPinned ? "1" : "0");
     applyDesktopPinnedClass();
     syncTrayContext();
+  });
+  listen("mrkit:webui-update-progress", (event) => {
+    const payload = event.payload || {};
+    state.webuiProgress = {
+      version: String(payload.version || ""),
+      phase: String(payload.phase || ""),
+      percent: Number(payload.percent) || 0,
+    };
+    renderWebuiPill();
   });
 
   // MR 链接用系统浏览器打开

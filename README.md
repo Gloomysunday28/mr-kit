@@ -91,8 +91,8 @@ GitHub Actions 会自动打包 macOS `aarch64` / `x64` dmg 并挂到对应 Relea
 
 规则：
 
-- 纯前端改动推 main 即热更；**动了 Rust 命令且前端用到的改动必须发完整版本**，并把 `src/webui-compat.json` 的 `minAppVersion` 提到该版本，防止旧 app 加载不兼容的新前端。
-- app 完整升级后本地热更包自动作废（内置前端不老于任何旧热更包），下个周期会重新拉取最新热更。
+- 纯前端改动推 main 即热更；WebUI 热更新版本独立于 App 包版本，同一个 App 版本可以接收多个热更，同一个热更也可以跨多个 App 版本共享。
+- `src/webui-compat.json` 只声明兼容区间：`minAppVersion` 必填，`maxAppVersion` 可选。只有当前端依赖新的 Rust 命令 / 字段 / 协议时，才提高 `minAppVersion`；遇到新 App 不兼容旧前端时，才设置 `maxAppVersion`。
 - 设置 → 更新里可查看当前界面版本（内置/热更）并「恢复内置界面」。
 
 ## 使用流程

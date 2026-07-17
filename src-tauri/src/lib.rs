@@ -299,15 +299,22 @@ struct WebuiManifest {
     sha256: String,
     #[serde(rename = "minAppVersion", default)]
     min_app_version: String,
-    /// 下载该包时的 app 版本；app 升级后内置前端更新，旧热更包作废
-    #[serde(rename = "appVersion", default)]
-    app_version: String,
+    #[serde(rename = "maxAppVersion", default)]
+    max_app_version: String,
 }
 
 #[derive(Serialize)]
 struct WebuiInfo {
     version: String,
     html: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct WebuiProgress {
+    version: String,
+    phase: String,
+    percent: u8,
 }
 
 fn webui_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -347,12 +354,33 @@ fn version_at_least(current: &str, required: &str) -> bool {
     true
 }
 
-/// 读取本地已安装的热更包；校验失败或 app 已升级则清除并回退内置前端
+fn webui_manifest_supported(manifest: &WebuiManifest) -> bool {
+    (manifest.min_app_version.is_empty()
+        || version_at_least(env!("CARGO_PKG_VERSION"), &manifest.min_app_version))
+        && (manifest.max_app_version.is_empty()
+            || version_at_least(&manifest.max_app_version, env!("CARGO_PKG_VERSION")))
+}
+
+fn emit_webui_progress(app: &AppHandle, version: &str, phase: &str, percent: u8) {
+    let _ = app.emit(
+        "mrkit:webui-update-progress",
+        WebuiProgress {
+            version: version.to_string(),
+            phase: phase.to_string(),
+            percent: percent.min(100),
+        },
+    );
+}
+
+/// 读取本地已安装的热更包；校验失败或 app 不在兼容区间则清除并回退内置前端
 fn installed_webui(app: &AppHandle) -> Option<(WebuiManifest, String)> {
     let dir = webui_dir(app).ok()?;
     let manifest: WebuiManifest =
         serde_json::from_str(&fs::read_to_string(dir.join("manifest.json")).ok()?).ok()?;
-    if manifest.app_version != env!("CARGO_PKG_VERSION") {
+    if manifest.version.is_empty()
+        || manifest.sha256.is_empty()
+        || !webui_manifest_supported(&manifest)
+    {
         let _ = fs::remove_dir_all(&dir);
         return None;
     }
@@ -397,10 +425,8 @@ async fn check_webui_update(app: AppHandle) -> Result<Option<String>, String> {
     if manifest.version.is_empty() || manifest.sha256.is_empty() {
         return Err("界面更新清单缺少版本或校验值".to_string());
     }
-    // 新前端可能依赖新的 Rust 命令；app 版本不够就不热更，等完整升级
-    if !manifest.min_app_version.is_empty()
-        && !version_at_least(env!("CARGO_PKG_VERSION"), &manifest.min_app_version)
-    {
+    // 热更新跨 App 版本共享；当前 App 只需要落在 manifest 声明的兼容区间内
+    if !webui_manifest_supported(&manifest) {
         return Ok(None);
     }
     if let Some((installed, _)) = installed_webui(&app) {
@@ -408,33 +434,49 @@ async fn check_webui_update(app: AppHandle) -> Result<Option<String>, String> {
             return Ok(None);
         }
     }
-    let html = client
+
+    emit_webui_progress(&app, &manifest.version, "downloading", 2);
+    let mut response = client
         .get(WEBUI_HTML_URL)
         .send()
         .await
         .and_then(|r| r.error_for_status())
-        .map_err(|e| format!("下载界面更新失败：{e}"))?
-        .text()
+        .map_err(|e| format!("下载界面更新失败：{e}"))?;
+    let total = response.content_length().unwrap_or(0);
+    let mut downloaded = 0_u64;
+    let mut bytes = Vec::with_capacity(total.min(1024 * 1024) as usize);
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|e| format!("读取界面更新失败：{e}"))?;
+        .map_err(|e| format!("读取界面更新失败：{e}"))?
+    {
+        downloaded += chunk.len() as u64;
+        bytes.extend_from_slice(&chunk);
+        let percent = if total > 0 {
+            2 + ((downloaded.saturating_mul(88) / total).min(88) as u8)
+        } else {
+            50
+        };
+        emit_webui_progress(&app, &manifest.version, "downloading", percent);
+    }
+    let html = String::from_utf8(bytes).map_err(|e| format!("读取界面更新失败：{e}"))?;
+    emit_webui_progress(&app, &manifest.version, "verifying", 92);
     if sha256_hex(html.as_bytes()) != manifest.sha256.to_lowercase() {
         return Err("界面更新校验失败（sha256 不匹配）".to_string());
     }
+    emit_webui_progress(&app, &manifest.version, "installing", 96);
     let dir = webui_dir(&app)?;
     fs::create_dir_all(&dir).map_err(|e| format!("创建热更新目录失败：{e}"))?;
     let tmp = dir.join("current.html.tmp");
     fs::write(&tmp, &html).map_err(|e| format!("写入界面更新失败：{e}"))?;
     fs::rename(&tmp, dir.join("current.html")).map_err(|e| format!("写入界面更新失败：{e}"))?;
-    let stored = WebuiManifest {
-        app_version: env!("CARGO_PKG_VERSION").to_string(),
-        ..manifest
-    };
     fs::write(
         dir.join("manifest.json"),
-        serde_json::to_string(&stored).map_err(|e| e.to_string())?,
+        serde_json::to_string(&manifest).map_err(|e| e.to_string())?,
     )
     .map_err(|e| format!("写入界面更新清单失败：{e}"))?;
-    Ok(Some(stored.version))
+    emit_webui_progress(&app, &manifest.version, "ready", 100);
+    Ok(Some(manifest.version))
 }
 
 #[tauri::command]
@@ -1837,5 +1879,41 @@ mod tests {
     #[test]
     fn newer_app_version_available_ignores_empty_target() {
         assert!(!is_newer_app_version_available("0.11.0", ""));
+    }
+
+    #[test]
+    fn webui_manifest_supports_versions_inside_range() {
+        let manifest = WebuiManifest {
+            version: "webui-1".to_string(),
+            sha256: "abc".to_string(),
+            min_app_version: "0.12.0".to_string(),
+            max_app_version: String::new(),
+        };
+
+        assert!(webui_manifest_supported(&manifest));
+    }
+
+    #[test]
+    fn webui_manifest_rejects_versions_below_minimum() {
+        let manifest = WebuiManifest {
+            version: "webui-1".to_string(),
+            sha256: "abc".to_string(),
+            min_app_version: "99.0.0".to_string(),
+            max_app_version: String::new(),
+        };
+
+        assert!(!webui_manifest_supported(&manifest));
+    }
+
+    #[test]
+    fn webui_manifest_rejects_versions_above_maximum() {
+        let manifest = WebuiManifest {
+            version: "webui-1".to_string(),
+            sha256: "abc".to_string(),
+            min_app_version: "0.1.0".to_string(),
+            max_app_version: "0.11.0".to_string(),
+        };
+
+        assert!(!webui_manifest_supported(&manifest));
     }
 }
