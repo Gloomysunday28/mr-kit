@@ -666,6 +666,47 @@ async fn stash_diff(path: String, rev: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn changed_file_diff(path: String, file: String) -> Result<String, String> {
+    let file = file.trim();
+    if file.is_empty() {
+        return Err("文件路径不能为空".to_string());
+    }
+
+    let out = git(
+        &path,
+        &[
+            "-c",
+            "core.quotepath=false",
+            "diff",
+            "--no-color",
+            "--find-renames",
+            "HEAD",
+            "--",
+            file,
+        ],
+    )?;
+    if out.ok && !out.stdout.trim().is_empty() {
+        return Ok(out.stdout);
+    }
+    if !out.ok {
+        return Err(command_error("读取文件 diff 失败", &out));
+    }
+
+    let repo_file = Path::new(&path).join(file);
+    if repo_file.is_file() {
+        let untracked = git(
+            &path,
+            &["diff", "--no-index", "--no-color", "--", "/dev/null", file],
+        )?;
+        if !untracked.stdout.trim().is_empty() {
+            return Ok(untracked.stdout);
+        }
+    }
+
+    Ok(out.stdout)
+}
+
+#[tauri::command]
 async fn git_fetch(path: String, remote: String) -> Result<String, String> {
     let out = git(&path, &["fetch", &remote, "--prune"])?;
     if out.ok {
@@ -1891,6 +1932,7 @@ pub fn run() {
             list_branches,
             list_stashes,
             stash_diff,
+            changed_file_diff,
             git_fetch,
             commits_between,
             ai_title,

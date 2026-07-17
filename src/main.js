@@ -13,7 +13,7 @@ const DINGTALK_CONTACTS = [
 ];
 
 /* 整窗拖拽：除交互控件和可选中文本外，按住任何地方都能拖动窗口 */
-const NO_DRAG = "button, input, select, a, canvas, .porcelain, .commits, .transcript, .stash-panel, .path, .errorline";
+const NO_DRAG = "button, input, select, a, canvas, .porcelain, .commits, .transcript, .stash-panel, .change-diff, .path, .errorline";
 let compactDrag = null;
 
 function shouldDragWindow(e) {
@@ -112,6 +112,8 @@ const state = {
   stashes: [],
   activeStashRev: "",
   stashDiffLoading: false,
+  activeChangedFile: "",
+  changedDiffLoading: false,
   webuiPending: null,
   webuiProgress: null,
   isCheckingWebui: false,
@@ -487,12 +489,12 @@ function renderStashes(error = "") {
     .join("");
 }
 
-function renderDiffHtml(patch) {
+function renderDiffHtml(patch, options = {}) {
   if (!window.Diff2Html?.html) {
     throw new Error("diff2html 组件未加载");
   }
   return window.Diff2Html.html(patch, {
-    drawFileList: true,
+    drawFileList: options.drawFileList ?? true,
     fileListToggle: false,
     fileListStartVisible: true,
     matching: "lines",
@@ -500,6 +502,65 @@ function renderDiffHtml(patch) {
     renderNothingWhenEmpty: false,
     colorScheme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
   });
+}
+
+function parseChangedFile(line) {
+  const status = line.slice(0, 2);
+  const label = line.slice(3);
+  const file = label.includes(" -> ") ? label.split(" -> ").pop() : label;
+  const code = status.trim() || "?";
+  const cls = /A|\?/.test(code) ? "add" : /D/.test(code) ? "del" : "mod";
+  return { status, code, label, file, cls };
+}
+
+function closeChangedFileDiff() {
+  const diff = $("changed-file-diff");
+  state.activeChangedFile = "";
+  state.changedDiffLoading = false;
+  if (diff) {
+    diff.hidden = true;
+    diff.innerHTML = "";
+  }
+  document.querySelectorAll("[data-changed-file]").forEach((btn) => {
+    btn.classList.remove("active");
+  });
+}
+
+function markActiveChangedFile(file) {
+  document.querySelectorAll("[data-changed-file]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.changedFile === file);
+  });
+}
+
+async function openChangedFileDiff(file) {
+  const diff = $("changed-file-diff");
+  if (!diff || !file) return;
+  if (state.activeChangedFile === file && !state.changedDiffLoading) {
+    closeChangedFileDiff();
+    return;
+  }
+
+  state.activeChangedFile = file;
+  state.changedDiffLoading = true;
+  markActiveChangedFile(file);
+  diff.hidden = false;
+  diff.innerHTML = `<div class="diff-loading">读取 ${esc(file)} diff…</div>`;
+  try {
+    const patch = await invoke("changed_file_diff", { path: state.dir, file });
+    if (state.activeChangedFile !== file) return;
+    if (!patch.trim()) {
+      diff.innerHTML = `<div class="diff-empty">该文件没有可显示的 diff</div>`;
+      return;
+    }
+    diff.innerHTML = renderDiffHtml(patch, { drawFileList: false });
+  } catch (e) {
+    if (state.activeChangedFile === file) {
+      diff.innerHTML = `<div class="diff-error">${esc(e)}</div>`;
+    }
+  } finally {
+    state.changedDiffLoading = false;
+    markActiveChangedFile(state.activeChangedFile);
+  }
 }
 
 async function loadStashes() {
@@ -577,6 +638,7 @@ async function refresh() {
   if (!info.is_repo) {
     $("git-summary").innerHTML = `<span class="seg warn">${esc(info.error)}</span>`;
     $("changed-files").innerHTML = "";
+    closeChangedFileDiff();
     state.stashes = [];
     state.activeStashRev = "";
     renderStashes();
@@ -609,14 +671,17 @@ async function refresh() {
   }
   $("git-summary").innerHTML = segs.join("");
 
-  $("changed-files").innerHTML = info.changed_files
-    .map((f) => {
-      const st = f.slice(0, 2).trim();
-      const file = f.slice(3);
-      const cls = /A|\?/.test(st) ? "add" : /D/.test(st) ? "del" : "mod";
-      return `<li><span class="st ${cls}">${esc(st)}</span>${esc(file)}</li>`;
+  const changedFiles = info.changed_files.map(parseChangedFile);
+  $("changed-files").innerHTML = changedFiles
+    .map(({ code, label, file, cls }) => {
+      return `<li><button class="changed-file" data-changed-file="${esc(file)}" title="查看 diff"><span class="st ${cls}">${esc(code)}</span><span class="changed-path">${esc(label)}</span></button></li>`;
     })
     .join("");
+  if (state.activeChangedFile && changedFiles.some((item) => item.file === state.activeChangedFile)) {
+    markActiveChangedFile(state.activeChangedFile);
+  } else {
+    closeChangedFileDiff();
+  }
 
   $("mr-card").hidden = false;
   $("mr-title").value = "";
@@ -1479,6 +1544,10 @@ async function bootApp() {
   $("stash-list").addEventListener("click", (e) => {
     const btn = e.target.closest("[data-stash-rev]");
     if (btn) openStashDiff(btn.dataset.stashRev);
+  });
+  $("changed-files").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-changed-file]");
+    if (btn) openChangedFileDiff(btn.dataset.changedFile);
   });
   $("btn-ai-title").addEventListener("click", aiTitle);
   $("btn-pin-desktop").addEventListener("click", () => setDesktopPinned(true));

@@ -774,6 +774,108 @@ body.compact-mode .settings {
   color: #8b949e;
 }
 
+/* ---------- 变更文件 diff ---------- */
+
+/* 隐藏滚动条（含 d2h 内部滚动区），滚动行为不变 */
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { width: 0; height: 0; }
+
+.changed-file {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.changed-file:hover .changed-path { color: var(--ink); }
+.changed-file.active .changed-path { color: var(--signal); }
+
+.changed-file .st { flex: 0 0 26px; }
+
+.changed-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.change-diff {
+  margin-top: 10px;
+  max-height: 45vh;
+  overflow: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: #ffffff;
+  color: #24292f;
+  font-family: var(--mono);
+}
+
+.diff-loading,
+.diff-empty,
+.diff-error {
+  padding: 12px;
+  color: var(--muted);
+  background: var(--inset);
+}
+
+.diff-error { color: var(--del); }
+
+.change-diff .d2h-wrapper {
+  font-family: var(--mono);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.change-diff .d2h-file-header { display: none; }
+
+.change-diff .d2h-file-wrapper { margin-bottom: 0; }
+
+.change-diff .d2h-file-wrapper,
+.change-diff .d2h-files-diff {
+  border-color: #d0d7de;
+}
+
+.change-diff .d2h-code-line,
+.change-diff .d2h-code-side-line,
+.change-diff .d2h-code-linenumber,
+.change-diff .d2h-code-side-linenumber {
+  font-family: var(--mono);
+}
+
+:root[data-theme="dark"] .change-diff {
+  background: #0d1117;
+  color: #c9d1d9;
+}
+
+:root[data-theme="dark"] .change-diff .d2h-file-wrapper,
+:root[data-theme="dark"] .change-diff .d2h-files-diff {
+  border-color: #30363d;
+}
+
+:root[data-theme="dark"] .change-diff .d2h-code-line,
+:root[data-theme="dark"] .change-diff .d2h-code-side-line,
+:root[data-theme="dark"] .change-diff .d2h-code-linenumber,
+:root[data-theme="dark"] .change-diff .d2h-code-side-linenumber {
+  background: #0d1117;
+  color: #c9d1d9;
+}
+
+:root[data-theme="dark"] .change-diff .d2h-del { background: #2d1117; }
+:root[data-theme="dark"] .change-diff .d2h-ins { background: #12261d; }
+
+:root[data-theme="dark"] .change-diff .d2h-info {
+  background: #161b22;
+  color: #8b949e;
+}
+
+:root[data-theme="dark"] .change-diff .d2h-code-linenumber,
+:root[data-theme="dark"] .change-diff .d2h-code-side-linenumber {
+  border-color: #30363d;
+  color: #8b949e;
+}
+
 /* ---------- 派发图 ---------- */
 
 .graph { padding: 4px 0 2px; }
