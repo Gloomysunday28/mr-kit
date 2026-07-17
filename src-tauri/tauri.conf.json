@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MR Kit",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "identifier": "com.weiguang.mrkit",
   "build": {
     "beforeDevCommand": "npm run dev",

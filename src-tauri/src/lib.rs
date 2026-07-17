@@ -164,11 +164,13 @@ async fn check_homebrew_update(cask: String) -> Result<Option<AppUpdateInfo>, St
 
     let _ = run_cmd("brew", &["update", "--quiet"], None);
     let out = run_cmd("brew", &["outdated", "--cask", "--json=v2", cask], None)?;
-    if !out.ok {
-        return Err(command_error("检查 Homebrew 更新失败", &out));
-    }
-    let json: serde_json::Value =
-        serde_json::from_str(&out.stdout).map_err(|e| format!("解析 Homebrew 更新失败：{e}"))?;
+    let json: serde_json::Value = serde_json::from_str(&out.stdout).map_err(|e| {
+        if out.ok {
+            format!("解析 Homebrew 更新失败：{e}")
+        } else {
+            command_error("检查 Homebrew 更新失败", &out)
+        }
+    })?;
     let Some(item) = json
         .get("casks")
         .and_then(|v| v.as_array())

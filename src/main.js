@@ -104,6 +104,8 @@ const state = {
   doodleDrawing: false,
   doodleLast: null,
   updateInfo: null,
+  updateStatus: "idle",
+  updateError: "",
   isCheckingUpdate: false,
   isInstallingUpdate: false,
 };
@@ -664,10 +666,9 @@ function loadUpdateConfig() {
     const cfg = JSON.parse(localStorage.getItem("mrkit.update") || "{}");
     return {
       cask: String(cfg.cask || "mr-kit").trim(),
-      autoCheck: cfg.autoCheck !== false,
     };
   } catch {
-    return { cask: "mr-kit", autoCheck: true };
+    return { cask: "mr-kit" };
   }
 }
 
@@ -814,6 +815,7 @@ function renderUpdateBanner() {
   const banner = $("update-banner");
   if (!banner) return;
   banner.hidden = !state.updateInfo;
+  renderUpdatePill();
   if (!state.updateInfo) return;
   const latestVersion = state.updateInfo.current_version || state.updateInfo.currentVersion || state.updateInfo.version;
   const installedVersion = state.updateInfo.version || "";
@@ -832,6 +834,33 @@ function renderUpdateBanner() {
       : "立即安装";
 }
 
+function renderUpdatePill() {
+  const pill = $("topbar-update");
+  if (!pill) return;
+  pill.classList.toggle("checking", state.updateStatus === "checking");
+  pill.classList.toggle("error", state.updateStatus === "error");
+  if (state.updateInfo) {
+    const latestVersion = state.updateInfo.current_version || state.updateInfo.currentVersion || state.updateInfo.version;
+    pill.hidden = false;
+    pill.textContent = `更新 ${latestVersion}`;
+    pill.title = state.updateInfo.notes || "发现可用更新";
+    return;
+  }
+  if (state.updateStatus === "checking") {
+    pill.hidden = false;
+    pill.textContent = "检查更新…";
+    pill.title = "正在检查 Homebrew 更新";
+    return;
+  }
+  if (state.updateStatus === "error") {
+    pill.hidden = false;
+    pill.textContent = "更新检查失败";
+    pill.title = state.updateError || "更新检查失败";
+    return;
+  }
+  pill.hidden = true;
+}
+
 async function checkForUpdates({ manual = false } = {}) {
   const cfg = loadUpdateConfig();
   const status = $("update-status");
@@ -843,10 +872,14 @@ async function checkForUpdates({ manual = false } = {}) {
   }
   if (state.isCheckingUpdate) return state.updateInfo;
   state.isCheckingUpdate = true;
+  state.updateStatus = "checking";
+  state.updateError = "";
+  renderUpdatePill();
   if (manual && status) status.textContent = "检查中…";
   try {
     const update = await invoke("check_homebrew_update", { cask: cfg.cask });
     state.updateInfo = update;
+    state.updateStatus = update ? "available" : "idle";
     renderUpdateBanner();
     if (update) {
       const lastNotified = localStorage.getItem("mrkit.update.notifiedVersion");
@@ -861,12 +894,18 @@ async function checkForUpdates({ manual = false } = {}) {
     }
     return update;
   } catch (e) {
-    if (manual && status) status.textContent = String(e);
+    state.updateStatus = "error";
+    state.updateError = String(e);
+    renderUpdatePill();
+    if (status) status.textContent = String(e);
     return null;
   } finally {
     state.isCheckingUpdate = false;
+    renderUpdatePill();
     if (manual && status) {
-      setTimeout(() => (status.textContent = ""), 2500);
+      setTimeout(() => {
+        if (state.updateStatus !== "error") status.textContent = "";
+      }, 2500);
     }
   }
 }
@@ -903,8 +942,6 @@ function renderSettings() {
   $("custom-model").value = cfg.custom?.model || "";
   $("dingtalk-webhook").value = dingtalk.webhook || dingtalkDefaults.webhook || "";
   $("update-cask").value = update.cask;
-  $("btn-update-auto").textContent = update.autoCheck ? "开启" : "关闭";
-  $("btn-update-auto").classList.toggle("selected", update.autoCheck);
   updateProviderFields();
 }
 
@@ -943,7 +980,6 @@ function saveSettings() {
   saveTargetBranches(parseTargetBranches($("target-branches").value));
   saveUpdateConfig({
     cask: $("update-cask").value.trim(),
-    autoCheck: $("btn-update-auto").classList.contains("selected"),
   });
   renderTargets();
   const status = $("settings-status");
@@ -1261,9 +1297,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     saveSettings();
     await checkForUpdates({ manual: true });
   });
-  $("btn-update-auto").addEventListener("click", () => {
-    $("btn-update-auto").classList.toggle("selected");
-    $("btn-update-auto").textContent = $("btn-update-auto").classList.contains("selected") ? "开启" : "关闭";
+  $("topbar-update").addEventListener("click", () => {
+    if (state.updateInfo) {
+      installUpdate();
+    } else {
+      openSettings();
+      showSettingsPage("update");
+    }
   });
   $("btn-update-install").addEventListener("click", installUpdate);
   $("btn-update-dismiss").addEventListener("click", () => {
@@ -1392,8 +1432,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   if (state.desktopPinned) {
     setDesktopPinned(true);
   }
-  if (loadUpdateConfig().autoCheck) {
-    setTimeout(() => checkForUpdates(), 1200);
-    setInterval(() => checkForUpdates(), 1000 * 60 * 60 * 4);
-  }
+  setTimeout(() => checkForUpdates(), 1200);
+  setInterval(() => checkForUpdates(), 1000 * 60 * 60 * 4);
 });

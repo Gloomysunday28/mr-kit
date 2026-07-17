@@ -1,6 +1,6 @@
 [package]
 name = "mr-kit"
-version = "0.3.0"
+version = "0.4.0"
 description = "MR Kit - GitLab MR 快捷工具"
 authors = ["weiguang"]
 edition = "2021"

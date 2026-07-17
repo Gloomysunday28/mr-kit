@@ -2223,7 +2223,7 @@ dependencies = [
 
 [[package]]
 name = "mr-kit"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "notify-rust",
  "objc2-app-kit",

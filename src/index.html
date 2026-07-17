@@ -22,6 +22,7 @@
     <header class="topbar" data-tauri-drag-region>
       <span class="wordmark" data-tauri-drag-region>MR&nbsp;KIT</span>
       <span class="wordmark-sub" data-tauri-drag-region>DISPATCH</span>
+      <button id="topbar-update" class="update-pill" hidden>检查更新…</button>
       <span id="glab-badge" class="lamp-status" data-tauri-drag-region><i class="lamp" data-tauri-drag-region></i>glab</span>
       <button id="btn-pin-desktop" class="btn text" title="缩小为桌面小窗">缩小</button>
       <button id="btn-settings" class="btn text" title="设置">设置</button>
@@ -283,8 +284,7 @@
               <input id="update-cask" placeholder="mr-kit" spellcheck="false" />
             </div>
             <div class="form-row inline-row">
-              <label>自动检查</label>
-              <button id="btn-update-auto" class="btn">开启</button>
+              <label>更新</label>
               <button id="btn-update-check" class="btn">立即检查</button>
             </div>
             <div class="form-row settings-actions">
