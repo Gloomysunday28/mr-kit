@@ -372,6 +372,14 @@ fn emit_webui_progress(app: &AppHandle, version: &str, phase: &str, percent: u8)
     );
 }
 
+fn webui_asset_url(base: &str) -> String {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{base}?t={ts}")
+}
+
 /// 读取本地已安装的热更包；校验失败或 app 不在兼容区间则清除并回退内置前端
 fn installed_webui(app: &AppHandle) -> Option<(WebuiManifest, String)> {
     let dir = webui_dir(app).ok()?;
@@ -414,7 +422,9 @@ async fn check_webui_update(app: AppHandle) -> Result<Option<String>, String> {
         .build()
         .map_err(|e| format!("初始化网络客户端失败：{e}"))?;
     let manifest: WebuiManifest = client
-        .get(WEBUI_MANIFEST_URL)
+        .get(webui_asset_url(WEBUI_MANIFEST_URL))
+        .header("Cache-Control", "no-cache")
+        .header("Pragma", "no-cache")
         .send()
         .await
         .and_then(|r| r.error_for_status())
@@ -437,7 +447,9 @@ async fn check_webui_update(app: AppHandle) -> Result<Option<String>, String> {
 
     emit_webui_progress(&app, &manifest.version, "downloading", 2);
     let mut response = client
-        .get(WEBUI_HTML_URL)
+        .get(webui_asset_url(WEBUI_HTML_URL))
+        .header("Cache-Control", "no-cache")
+        .header("Pragma", "no-cache")
         .send()
         .await
         .and_then(|r| r.error_for_status())
