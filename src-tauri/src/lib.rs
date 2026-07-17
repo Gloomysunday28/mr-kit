@@ -199,54 +199,14 @@ async fn check_homebrew_update(cask: String) -> Result<Option<AppUpdateInfo>, St
 
     ensure_homebrew_tap()?;
 
-    let installed_version = installed_homebrew_cask_version(cask)?;
-    let current_info_version = homebrew_cask_current_version(cask)?;
-    if !is_newer_app_version_available(env!("CARGO_PKG_VERSION"), &current_info_version) {
-        return Ok(None);
-    }
-    if installed_version.is_none() {
-        if !release_asset_available(&current_info_version) {
-            return Ok(None);
-        }
-        return Ok(Some(AppUpdateInfo {
-            cask: cask.to_string(),
-            version: String::new(),
-            current_version: current_info_version,
-            notes: "可通过 Homebrew 安装".to_string(),
-        }));
+    let update = run_cmd("brew", &["update", "--quiet"], None)?;
+    if !update.ok {
+        return Err(command_error("更新 Homebrew 元数据失败", &update));
     }
 
-    let _ = run_cmd("brew", &["update", "--quiet"], None);
-    let out = run_cmd("brew", &["outdated", "--cask", "--json=v2", cask], None)?;
-    let json: serde_json::Value = serde_json::from_str(&out.stdout).map_err(|e| {
-        if out.ok {
-            format!("解析 Homebrew 更新失败：{e}")
-        } else {
-            command_error("检查 Homebrew 更新失败", &out)
-        }
-    })?;
-    let Some(item) = json
-        .get("casks")
-        .and_then(|v| v.as_array())
-        .and_then(|items| items.first())
-    else {
-        return Ok(None);
-    };
-
-    let current_version = item
-        .get("current_version")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let version = item
-        .get("installed_versions")
-        .and_then(|v| v.as_array())
-        .and_then(|items| items.first())
-        .and_then(|v| v.as_str())
-        .or(installed_version.as_deref())
-        .unwrap_or("")
-        .to_string();
-    if !is_newer_app_version_available(env!("CARGO_PKG_VERSION"), &current_version) {
+    let current_app_version = env!("CARGO_PKG_VERSION");
+    let current_version = homebrew_cask_current_version(cask)?;
+    if !is_newer_app_version_available(current_app_version, &current_version) {
         return Ok(None);
     }
     if !release_asset_available(&current_version) {
@@ -254,7 +214,7 @@ async fn check_homebrew_update(cask: String) -> Result<Option<AppUpdateInfo>, St
     }
     Ok(Some(AppUpdateInfo {
         cask: cask.to_string(),
-        version,
+        version: current_app_version.to_string(),
         current_version,
         notes: "Homebrew 有可用更新".to_string(),
     }))
