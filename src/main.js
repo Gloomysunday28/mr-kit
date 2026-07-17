@@ -951,6 +951,7 @@ async function checkWebuiUpdate() {
       state.webuiPending = version;
       state.webuiProgress = null;
       renderWebuiPill();
+      setTimeout(() => location.reload(), 300);
     }
   } catch {
     // 静默失败，下个周期再试；手动入口在设置页
