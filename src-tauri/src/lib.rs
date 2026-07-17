@@ -221,6 +221,10 @@ async fn install_homebrew_update(app: AppHandle, cask: String) -> Result<(), Str
     let app_path = PathBuf::from("/Applications/MR Kit.app");
     if app_path.exists() {
         let path = app_path.to_string_lossy().to_string();
+        let xattr = run_cmd("xattr", &["-dr", "com.apple.quarantine", &path], None)?;
+        if !xattr.ok {
+            return Err(command_error("移除 Gatekeeper 隔离标记失败", &xattr));
+        }
         let open = run_cmd("open", &["-n", &path], None)?;
         if !open.ok {
             return Err(command_error("重新打开 MR Kit 失败", &open));
