@@ -20,13 +20,16 @@
 
   <body>
     <header class="topbar" data-tauri-drag-region>
-      <span class="wordmark" data-tauri-drag-region>MR&nbsp;KIT</span>
-      <span class="wordmark-sub" data-tauri-drag-region>DISPATCH</span>
-      <button id="topbar-update" class="update-pill" hidden>检查更新…</button>
-      <span id="glab-badge" class="lamp-status" data-tauri-drag-region><i class="lamp" data-tauri-drag-region></i>glab</span>
-      <button id="btn-pin-desktop" class="btn text" title="缩小为桌面小窗">缩小</button>
-      <button id="btn-settings" class="btn text" title="设置">设置</button>
-      <span class="kbd-hint" data-tauri-drag-region title="全局快捷键：唤起 / 隐藏窗口">⌘⇧M</span>
+      <div class="topbar-left" data-tauri-drag-region>
+        <span class="wordmark" data-tauri-drag-region>MR&nbsp;KIT</span>
+      </div>
+      <div class="topbar-right" data-tauri-drag-region>
+        <span id="glab-badge" class="lamp-status" data-tauri-drag-region><i class="lamp" data-tauri-drag-region></i>glab</span>
+        <button id="topbar-update" class="update-pill" hidden>检查更新…</button>
+        <button id="btn-pin-desktop" class="btn text" title="缩小为桌面小窗">缩小</button>
+        <button id="btn-settings" class="btn text" title="设置">设置</button>
+        <span class="kbd-hint" data-tauri-drag-region title="全局快捷键：唤起 / 隐藏窗口">⌘⇧M</span>
+      </div>
     </header>
 
     <canvas id="doodle-canvas" class="doodle-canvas" hidden></canvas>

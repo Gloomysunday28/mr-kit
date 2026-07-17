@@ -110,10 +110,24 @@ button { font: inherit; color: inherit; background: none; border: none; padding:
 .topbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 18px;
   height: 44px;
   padding: 0 14px 8px 84px; /* 左侧避让 macOS 交通灯 */
   border-bottom: 1px solid var(--hairline);
+}
+
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.topbar-right {
+  justify-content: flex-end;
+  gap: 14px;
+  margin-left: auto;
 }
 
 .update-banner {
@@ -146,14 +160,8 @@ button { font: inherit; color: inherit; background: none; border: none; padding:
   letter-spacing: 2.5px;
   color: var(--ink);
 }
-.wordmark-sub {
-  font: 500 9.5px/1 var(--signage);
-  letter-spacing: 2.5px;
-  color: var(--faint);
-}
 
 .update-pill {
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   min-height: 23px;
