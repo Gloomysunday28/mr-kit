@@ -45,7 +45,7 @@ function codesignIdentities() {
 }
 
 function signingIdentity() {
-  const configured = process.env.MR_KIT_SIGNING_IDENTITY || process.env.APPLE_SIGNING_IDENTITY;
+  const configured = buildEnv.MR_KIT_SIGNING_IDENTITY || buildEnv.APPLE_SIGNING_IDENTITY;
   if (configured) {
     return configured;
   }
@@ -96,8 +96,8 @@ function macSigningConfig() {
       macOS: {
         signingIdentity: identity,
         hardenedRuntime: true,
-        ...(process.env.APPLE_PROVIDER_SHORT_NAME
-          ? { providerShortName: process.env.APPLE_PROVIDER_SHORT_NAME }
+        ...(buildEnv.APPLE_PROVIDER_SHORT_NAME
+          ? { providerShortName: buildEnv.APPLE_PROVIDER_SHORT_NAME }
           : {}),
       },
     },

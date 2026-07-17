@@ -47,7 +47,9 @@ brew trust Gloomysunday28/mr-kit
 brew install --cask mr-kit
 ```
 
-Homebrew cask 读取 GitHub Release 里的 dmg。发布新版本时，先同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和 `Casks/mr-kit.rb` 的版本号，然后推 tag：
+Homebrew cask 读取 GitHub Release 里的 dmg。CI 会使用 Developer ID 证书签名并公证 macOS 包，避免下载后被 Gatekeeper 提示移到废纸篓。发布前需要配置 GitHub Secrets：`APPLE_CERTIFICATE`、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_ID`、`APPLE_PASSWORD`、`APPLE_TEAM_ID`，可选 `APPLE_PROVIDER_SHORT_NAME`。
+
+发布新版本时，先同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和 `Casks/mr-kit.rb` 的版本号，然后推 tag：
 
 ```bash
 git tag v0.1.0
