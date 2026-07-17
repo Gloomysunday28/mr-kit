@@ -13,14 +13,22 @@ const outDir = join(root, "dist-webui");
 const indexHtml = readFileSync(join(srcDir, "index.html"), "utf8");
 const styles = readFileSync(join(srcDir, "styles.css"), "utf8");
 const mainJs = readFileSync(join(srcDir, "main.js"), "utf8");
+const diff2htmlCss = readFileSync(join(srcDir, "vendor/diff2html.min.css"), "utf8");
+const diff2htmlJs = readFileSync(join(srcDir, "vendor/diff2html.min.js"), "utf8");
 const compat = JSON.parse(readFileSync(join(srcDir, "webui-compat.json"), "utf8"));
 
 // 内联后这些 token 会提前终结 <script>/<style>，必须挡住
 if (/<\/script/i.test(mainJs) || /<!--/.test(mainJs)) {
   throw new Error("main.js 含有 </script> 或 <!--，无法安全内联，请改写后重试");
 }
+if (/<\/script/i.test(diff2htmlJs) || /<!--/.test(diff2htmlJs)) {
+  throw new Error("diff2html.min.js 含有 </script> 或 <!--，无法安全内联");
+}
 if (/<\/style/i.test(styles)) {
   throw new Error("styles.css 含有 </style>，无法安全内联");
+}
+if (/<\/style/i.test(diff2htmlCss)) {
+  throw new Error("diff2html.min.css 含有 </style>，无法安全内联");
 }
 if (!compat.minAppVersion) {
   throw new Error("src/webui-compat.json 缺少 minAppVersion");
@@ -28,20 +36,32 @@ if (!compat.minAppVersion) {
 
 let html = indexHtml;
 
-const styleTag = '<link rel="stylesheet" href="styles.css" />';
-if (!html.includes(styleTag)) {
-  throw new Error(`index.html 里找不到 ${styleTag}`);
-}
-html = html.replace(styleTag, `<style>\n${styles}\n</style>`);
-
 // 引导块替换为内联 main.js —— 更新包里绝不能再有引导逻辑，否则会递归加载
 const bootstrapRe = /[ \t]*<!-- webui-bootstrap-start[\s\S]*?<!-- webui-bootstrap-end -->/;
 if (!bootstrapRe.test(html)) {
   throw new Error("index.html 里找不到 webui-bootstrap 标记块");
 }
-html = html.replace(bootstrapRe, `    <script type="module">\n${mainJs}\n</script>`);
+html = html.replace(bootstrapRe, () => `    <script type="module">\n${mainJs}\n</script>`);
 
-if (/webui-bootstrap|document\.write/.test(html)) {
+const styleTag = '<link rel="stylesheet" href="styles.css" />';
+if (!html.includes(styleTag)) {
+  throw new Error(`index.html 里找不到 ${styleTag}`);
+}
+html = html.replace(styleTag, () => `<style>\n${styles}\n</style>`);
+
+const diff2htmlStyleTag = '<link rel="stylesheet" href="vendor/diff2html.min.css" />';
+if (!html.includes(diff2htmlStyleTag)) {
+  throw new Error(`index.html 里找不到 ${diff2htmlStyleTag}`);
+}
+html = html.replace(diff2htmlStyleTag, () => `<style>\n${diff2htmlCss}\n</style>`);
+
+const diff2htmlScriptTag = '<script src="vendor/diff2html.min.js"></script>';
+if (!html.includes(diff2htmlScriptTag)) {
+  throw new Error(`index.html 里找不到 ${diff2htmlScriptTag}`);
+}
+html = html.replace(diff2htmlScriptTag, () => `<script>\n${diff2htmlJs}\n</script>`);
+
+if (/webui-bootstrap|__mrkitHotLoaded|document\.open\(\)/.test(html)) {
   throw new Error("更新包中残留引导逻辑，检查 index.html 的标记块是否完整");
 }
 

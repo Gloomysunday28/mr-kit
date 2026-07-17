@@ -13,7 +13,7 @@ const DINGTALK_CONTACTS = [
 ];
 
 /* 整窗拖拽：除交互控件和可选中文本外，按住任何地方都能拖动窗口 */
-const NO_DRAG = "button, input, select, a, canvas, .porcelain, .commits, .transcript, .path, .errorline";
+const NO_DRAG = "button, input, select, a, canvas, .porcelain, .commits, .transcript, .stash-panel, .path, .errorline";
 let compactDrag = null;
 
 function shouldDragWindow(e) {
@@ -109,6 +109,9 @@ const state = {
   updateError: "",
   isCheckingUpdate: false,
   isInstallingUpdate: false,
+  stashes: [],
+  activeStashRev: "",
+  stashDiffLoading: false,
   webuiPending: null,
   webuiProgress: null,
   isCheckingWebui: false,
@@ -449,6 +452,109 @@ async function hideCompactWidget() {
   await getCurrentWindow().hide();
 }
 
+function renderStashes(error = "") {
+  const panel = $("stash-panel");
+  const list = $("stash-list");
+  const count = $("stash-count");
+  const diff = $("stash-diff");
+  if (!panel || !list || !count || !diff) return;
+
+  if (error) {
+    panel.hidden = false;
+    count.textContent = "读取失败";
+    list.innerHTML = `<div class="stash-error">${esc(error)}</div>`;
+    diff.hidden = true;
+    return;
+  }
+
+  if (!state.stashes.length) {
+    panel.hidden = true;
+    list.innerHTML = "";
+    diff.hidden = true;
+    diff.innerHTML = "";
+    return;
+  }
+
+  panel.hidden = false;
+  count.textContent = `${state.stashes.length} 条`;
+  list.innerHTML = state.stashes
+    .map((stash) => {
+      const active = stash.rev === state.activeStashRev;
+      const branch = stash.branch ? `<span class="stash-branch">${esc(stash.branch)}</span>` : "";
+      const message = stash.message || stash.subject || "未命名 stash";
+      return `<button class="stash-item ${active ? "active" : ""}" data-stash-rev="${esc(stash.rev)}" title="${esc(stash.subject || message)}"><span class="stash-rev">${esc(stash.rev)}</span>${branch}<span class="stash-message">${esc(message)}</span></button>`;
+    })
+    .join("");
+}
+
+function renderDiffHtml(patch) {
+  if (!window.Diff2Html?.html) {
+    throw new Error("diff2html 组件未加载");
+  }
+  return window.Diff2Html.html(patch, {
+    drawFileList: true,
+    fileListToggle: false,
+    fileListStartVisible: true,
+    matching: "lines",
+    outputFormat: "line-by-line",
+    renderNothingWhenEmpty: false,
+    colorScheme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+  });
+}
+
+async function loadStashes() {
+  try {
+    const stashes = await invoke("list_stashes", { path: state.dir });
+    state.stashes = stashes;
+    if (state.activeStashRev && !stashes.some((stash) => stash.rev === state.activeStashRev)) {
+      state.activeStashRev = "";
+      $("stash-diff").hidden = true;
+      $("stash-diff").innerHTML = "";
+    }
+    renderStashes();
+    return stashes;
+  } catch (e) {
+    state.stashes = [];
+    state.activeStashRev = "";
+    renderStashes(String(e));
+    return [];
+  }
+}
+
+async function openStashDiff(rev) {
+  const diff = $("stash-diff");
+  if (!diff || !rev) return;
+  if (state.activeStashRev === rev && !state.stashDiffLoading) {
+    state.activeStashRev = "";
+    renderStashes();
+    diff.hidden = true;
+    diff.innerHTML = "";
+    return;
+  }
+
+  state.activeStashRev = rev;
+  state.stashDiffLoading = true;
+  renderStashes();
+  diff.hidden = false;
+  diff.innerHTML = `<div class="stash-loading">读取 ${esc(rev)} diff…</div>`;
+  try {
+    const patch = await invoke("stash_diff", { path: state.dir, rev });
+    if (state.activeStashRev !== rev) return;
+    if (!patch.trim()) {
+      diff.innerHTML = `<div class="stash-empty">该 stash 没有可显示的 diff</div>`;
+      return;
+    }
+    diff.innerHTML = renderDiffHtml(patch);
+  } catch (e) {
+    if (state.activeStashRev === rev) {
+      diff.innerHTML = `<div class="stash-error">${esc(e)}</div>`;
+    }
+  } finally {
+    state.stashDiffLoading = false;
+    renderStashes();
+  }
+}
+
 /* ---------- git 状态 ---------- */
 
 async function refresh() {
@@ -471,11 +577,16 @@ async function refresh() {
   if (!info.is_repo) {
     $("git-summary").innerHTML = `<span class="seg warn">${esc(info.error)}</span>`;
     $("changed-files").innerHTML = "";
+    state.stashes = [];
+    state.activeStashRev = "";
+    renderStashes();
     $("mr-card").hidden = true;
     renderTargets();
     syncTrayContext();
     return;
   }
+
+  const stashes = await loadStashes();
 
   // 状态段：分支 / 工作区 / 同步，全部明文
   const segs = [
@@ -492,6 +603,9 @@ async function refresh() {
     if (!info.ahead && !info.behind) segs.push(`<span class="seg dim">已同步</span>`);
   } else {
     segs.push(`<span class="seg warn">未推送到远程</span>`);
+  }
+  if (stashes.length) {
+    segs.push(`<span class="seg stash">stash ${stashes.length}</span>`);
   }
   $("git-summary").innerHTML = segs.join("");
 
@@ -1362,6 +1476,10 @@ async function bootApp() {
   });
   $("btn-refresh").addEventListener("click", refresh);
   $("btn-fetch").addEventListener("click", doFetch);
+  $("stash-list").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-stash-rev]");
+    if (btn) openStashDiff(btn.dataset.stashRev);
+  });
   $("btn-ai-title").addEventListener("click", aiTitle);
   $("btn-pin-desktop").addEventListener("click", () => setDesktopPinned(true));
   $("btn-settings").addEventListener("click", openSettings);

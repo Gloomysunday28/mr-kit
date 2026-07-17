@@ -1,7 +1,7 @@
 {
   "name": "mr-kit",
   "private": true,
-  "version": "0.12.2",
+  "version": "0.12.3",
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -13,5 +13,8 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "vite": "^7.0.0"
+  },
+  "dependencies": {
+    "diff2html": "^3.4.56"
   }
 }

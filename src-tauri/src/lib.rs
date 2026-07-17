@@ -82,6 +82,16 @@ struct GitInfo {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct StashEntry {
+    rev: String,
+    index: usize,
+    branch: String,
+    message: String,
+    subject: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AppUpdateInfo {
     cask: String,
     version: String,
@@ -621,6 +631,78 @@ async fn watch_repo(app: AppHandle, path: String) -> Result<(), String> {
 async fn list_branches(path: String) -> Result<Vec<String>, String> {
     let out = git(&path, &["branch", "--format=%(refname:short)"])?;
     Ok(out.stdout.lines().map(|s| s.to_string()).collect())
+}
+
+fn parse_stash_index(rev: &str) -> usize {
+    rev.strip_prefix("stash@{")
+        .and_then(|s| s.strip_suffix('}'))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
+fn split_stash_subject(subject: &str) -> (String, String) {
+    let trimmed = subject.trim();
+    let normalized = trimmed
+        .strip_prefix("WIP on ")
+        .or_else(|| trimmed.strip_prefix("On "))
+        .unwrap_or(trimmed);
+    if let Some((branch, message)) = normalized.split_once(": ") {
+        (branch.to_string(), message.to_string())
+    } else {
+        (String::new(), trimmed.to_string())
+    }
+}
+
+#[tauri::command]
+async fn list_stashes(path: String) -> Result<Vec<StashEntry>, String> {
+    let out = git(
+        &path,
+        &["-c", "core.quotepath=false", "stash", "list", "--format=%gd%x00%gs"],
+    )?;
+    if !out.ok {
+        return Err(command_error("读取 stash 列表失败", &out));
+    }
+    Ok(out
+        .stdout
+        .lines()
+        .filter_map(|line| {
+            let (rev, subject) = line.split_once('\0')?;
+            let (branch, message) = split_stash_subject(subject);
+            Some(StashEntry {
+                rev: rev.to_string(),
+                index: parse_stash_index(rev),
+                branch,
+                message,
+                subject: subject.to_string(),
+            })
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn stash_diff(path: String, rev: String) -> Result<String, String> {
+    let rev = rev.trim();
+    if rev.is_empty() {
+        return Err("stash 标识不能为空".to_string());
+    }
+    let out = git(
+        &path,
+        &[
+            "-c",
+            "core.quotepath=false",
+            "stash",
+            "show",
+            "--patch",
+            "--include-untracked",
+            "--no-color",
+            rev,
+        ],
+    )?;
+    if out.ok {
+        Ok(out.stdout)
+    } else {
+        Err(command_error("读取 stash diff 失败", &out))
+    }
 }
 
 #[tauri::command]
@@ -1847,6 +1929,8 @@ pub fn run() {
             git_info,
             watch_repo,
             list_branches,
+            list_stashes,
+            stash_diff,
             git_fetch,
             commits_between,
             ai_title,

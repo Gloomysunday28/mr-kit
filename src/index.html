@@ -12,9 +12,11 @@
         document.documentElement.dataset.theme = light ? "light" : "dark";
       })();
     </script>
+    <link rel="stylesheet" href="vendor/diff2html.min.css" />
     <link rel="stylesheet" href="styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MR Kit</title>
+    <script src="vendor/diff2html.min.js"></script>
     <!-- webui-bootstrap-start：打界面更新包时此块会被替换为内联的 main.js -->
     <script type="module">
       let hot = null;
@@ -105,6 +107,14 @@
           </span>
         </div>
         <ul id="changed-files" class="porcelain"></ul>
+        <div id="stash-panel" class="stash-panel" hidden>
+          <div class="stash-head">
+            <span>stash</span>
+            <span id="stash-count" class="dim"></span>
+          </div>
+          <div id="stash-list" class="stash-list"></div>
+          <div id="stash-diff" class="stash-diff" hidden></div>
+        </div>
       </section>
 
       <!-- 通知与 MR 队列 -->
