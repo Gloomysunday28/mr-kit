@@ -143,7 +143,14 @@ fn release_asset_available(version: &str) -> bool {
     match run_cmd(
         "curl",
         &[
-            "-sIL", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10", &url,
+            "-sIL",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "--max-time",
+            "10",
+            &url,
         ],
         None,
     ) {
@@ -169,6 +176,10 @@ fn homebrew_cask_current_version(cask: &str) -> Result<String, String> {
         .to_string())
 }
 
+fn is_newer_app_version_available(current_app_version: &str, target_version: &str) -> bool {
+    !target_version.trim().is_empty() && !version_at_least(current_app_version, target_version)
+}
+
 #[tauri::command]
 async fn check_homebrew_update(cask: String) -> Result<Option<AppUpdateInfo>, String> {
     let cask = cask.trim();
@@ -180,6 +191,9 @@ async fn check_homebrew_update(cask: String) -> Result<Option<AppUpdateInfo>, St
 
     let installed_version = installed_homebrew_cask_version(cask)?;
     let current_info_version = homebrew_cask_current_version(cask)?;
+    if !is_newer_app_version_available(env!("CARGO_PKG_VERSION"), &current_info_version) {
+        return Ok(None);
+    }
     if installed_version.is_none() {
         if !release_asset_available(&current_info_version) {
             return Ok(None);
@@ -222,6 +236,9 @@ async fn check_homebrew_update(cask: String) -> Result<Option<AppUpdateInfo>, St
         .or(installed_version.as_deref())
         .unwrap_or("")
         .to_string();
+    if !is_newer_app_version_available(env!("CARGO_PKG_VERSION"), &current_version) {
+        return Ok(None);
+    }
     if !release_asset_available(&current_version) {
         return Ok(None);
     }
@@ -1796,4 +1813,29 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn newer_app_version_available_ignores_same_version() {
+        assert!(!is_newer_app_version_available("0.11.0", "0.11.0"));
+    }
+
+    #[test]
+    fn newer_app_version_available_ignores_older_target() {
+        assert!(!is_newer_app_version_available("0.11.0", "0.10.9"));
+    }
+
+    #[test]
+    fn newer_app_version_available_detects_newer_target() {
+        assert!(is_newer_app_version_available("0.10.9", "0.11.0"));
+    }
+
+    #[test]
+    fn newer_app_version_available_ignores_empty_target() {
+        assert!(!is_newer_app_version_available("0.11.0", ""));
+    }
 }
