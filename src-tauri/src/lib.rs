@@ -218,7 +218,18 @@ async fn install_homebrew_update(app: AppHandle, cask: String) -> Result<(), Str
     if !out.ok {
         return Err(command_error("Homebrew 安装或升级失败", &out));
     }
-    app.restart();
+    let app_path = PathBuf::from("/Applications/MR Kit.app");
+    if app_path.exists() {
+        let path = app_path.to_string_lossy().to_string();
+        let open = run_cmd("open", &["-n", &path], None)?;
+        if !open.ok {
+            return Err(command_error("重新打开 MR Kit 失败", &open));
+        }
+        app.exit(0);
+    } else {
+        app.restart();
+    }
+    Ok(())
 }
 
 #[tauri::command]

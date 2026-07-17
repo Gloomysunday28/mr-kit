@@ -1,7 +1,7 @@
 cask "mr-kit" do
   arch arm: "aarch64", intel: "x64"
 
-  version "0.5.0"
+  version "0.6.0"
   sha256 :no_check
 
   url "https://github.com/Gloomysunday28/mr-kit/releases/download/v#{version}/MR-Kit_#{version}_#{arch}.dmg",
