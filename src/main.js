@@ -940,7 +940,7 @@ async function installUpdate() {
   }
 }
 
-/* ---------- 界面热更新 ---------- */
+/* ---------- 界面更新 ---------- */
 
 async function checkWebuiUpdate() {
   if (state.webuiPending || state.isCheckingWebui) return;
@@ -970,11 +970,11 @@ function renderWebuiPill() {
   if (progress && !state.webuiPending) {
     const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
     pill.innerHTML = `
-      <span class="webui-progress-label">安装热更</span>
+      <span class="webui-progress-label">安装更新</span>
       <span class="webui-progress-track"><i style="width:${percent}%"></i></span>
       <span class="webui-progress-value">${percent}%</span>
     `;
-    pill.title = `正在安装界面热更新 ${progress.version || ""}`;
+    pill.title = `正在安装界面更新 ${progress.version || ""}`;
     return;
   }
   if (state.webuiPending) {
@@ -988,7 +988,7 @@ async function renderWebuiVersion() {
   if (!el) return;
   try {
     const info = await invoke("webui_current");
-    el.textContent = info?.version ? `热更 ${info.version}` : "内置";
+    el.textContent = info?.version ? `界面 ${info.version}` : "内置";
   } catch {
     el.textContent = "内置";
   }
@@ -1531,7 +1531,7 @@ async function bootApp() {
   setInterval(() => checkWebuiUpdate(), 1000 * 60 * 30);
 }
 
-// main.js 由热更引导脚本动态注入，可能在 DOMContentLoaded 之后才执行
+// main.js 由界面更新引导脚本动态注入，可能在 DOMContentLoaded 之后才执行
 if (document.readyState === "loading") {
   window.addEventListener("DOMContentLoaded", bootApp);
 } else {

@@ -22,8 +22,6 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             arch: aarch64
-          - target: x86_64-apple-darwin
-            arch: x64
 
     env:
       MR_KIT_ADHOC_SIGN: "1"
@@ -111,7 +109,7 @@ jobs:
                 tag: context.ref.replace('refs/tags/', ''),
               });
               for (const asset of release.data.assets) {
-                if (/^MR-Kit_.*_(aarch64|x64)\.dmg$/.test(asset.name)) {
+                if (/^MR-Kit_.*_aarch64\.dmg$/.test(asset.name)) {
                   await github.rest.repos.deleteReleaseAsset({
                     owner: context.repo.owner,
                     repo: context.repo.repo,

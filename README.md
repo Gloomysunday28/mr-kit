@@ -83,17 +83,17 @@ git tag v0.11.0
 git push origin v0.11.0
 ```
 
-GitHub Actions 会自动打包 macOS `aarch64` / `x64` dmg 并挂到对应 Release，随后由 CI 更新 `Casks/mr-kit.rb` 的版本号并推回 main——cask 必须在安装包就绪后才更新，否则客户端会在 dmg 存在前收到升级提示。
+GitHub Actions 会自动打包 macOS `aarch64` dmg 并挂到对应 Release，随后由 CI 更新 `Casks/mr-kit.rb` 的版本号并推回 main——cask 必须在安装包就绪后才更新，否则客户端会在 dmg 存在前收到升级提示。
 
-## 前端热更新
+## 前端更新
 
 `src/**` 推到 main 后，CI（`webui.yml`）会把 `index.html` + `styles.css` + `main.js` 内联成单个 `webui.html`，连同 sha256 清单挂到滚动 Release `webui` 上。客户端启动后及每 30 分钟检查一次，下载校验通过后顶栏出现「界面已更新」，点击即重载生效，无需发包。
 
 规则：
 
-- 纯前端改动推 main 即热更；WebUI 热更新版本独立于 App 包版本，同一个 App 版本可以接收多个热更，同一个热更也可以跨多个 App 版本共享。
+- 纯前端改动推 main 即更新；WebUI 更新版本独立于 App 包版本，同一个 App 版本可以接收多个更新，同一个更新也可以跨多个 App 版本共享。
 - `src/webui-compat.json` 只声明兼容区间：`minAppVersion` 必填，`maxAppVersion` 可选。只有当前端依赖新的 Rust 命令 / 字段 / 协议时，才提高 `minAppVersion`；遇到新 App 不兼容旧前端时，才设置 `maxAppVersion`。
-- 设置 → 更新里可查看当前界面版本（内置/热更）并「恢复内置界面」。
+- 设置 → 更新里可查看当前界面版本（内置/更新）并「恢复内置界面」。
 
 ## 使用流程
 

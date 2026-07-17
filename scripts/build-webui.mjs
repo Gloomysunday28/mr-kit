@@ -1,4 +1,4 @@
-// 打前端热更包：把 index.html + styles.css + main.js 内联成单个自包含 HTML，
+// 打前端更新包：把 index.html + styles.css + main.js 内联成单个自包含 HTML，
 // 并生成带 sha256 的清单。产物挂在滚动 Release `webui` 上，客户端定期拉取。
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -34,7 +34,7 @@ if (!html.includes(styleTag)) {
 }
 html = html.replace(styleTag, `<style>\n${styles}\n</style>`);
 
-// 引导块替换为内联 main.js —— 热更包里绝不能再有引导逻辑，否则会递归加载
+// 引导块替换为内联 main.js —— 更新包里绝不能再有引导逻辑，否则会递归加载
 const bootstrapRe = /[ \t]*<!-- webui-bootstrap-start[\s\S]*?<!-- webui-bootstrap-end -->/;
 if (!bootstrapRe.test(html)) {
   throw new Error("index.html 里找不到 webui-bootstrap 标记块");
@@ -42,7 +42,7 @@ if (!bootstrapRe.test(html)) {
 html = html.replace(bootstrapRe, `    <script type="module">\n${mainJs}\n</script>`);
 
 if (/webui-bootstrap|document\.write/.test(html)) {
-  throw new Error("热更包中残留引导逻辑，检查 index.html 的标记块是否完整");
+  throw new Error("更新包中残留引导逻辑，检查 index.html 的标记块是否完整");
 }
 
 const sha = execSync("git rev-parse --short=7 HEAD", { cwd: root }).toString().trim();

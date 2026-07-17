@@ -41,7 +41,7 @@ jobs:
               --target "$GITHUB_SHA" \
               --prerelease \
               --title "WebUI hot updates" \
-              --notes "前端热更新滚动通道，客户端自动拉取。资产由 CI 覆盖更新，勿手动改动。"
+              --notes "前端更新滚动通道，客户端自动拉取。资产由 CI 覆盖更新，勿手动改动。"
           # 先传 html 再传 json：客户端以 json 为准，避免拿到新清单配旧包
           gh release upload webui dist-webui/webui.html --repo "$GITHUB_REPOSITORY" --clobber
           gh release upload webui dist-webui/webui.json --repo "$GITHUB_REPOSITORY" --clobber
