@@ -68,6 +68,18 @@ function macSigningConfig() {
     return {};
   }
 
+  if (buildEnv.MR_KIT_ADHOC_SIGN === "1") {
+    console.warn("MR_KIT_ADHOC_SIGN=1，使用 ad-hoc 签名。");
+    return {
+      bundle: {
+        macOS: {
+          signingIdentity: "-",
+          hardenedRuntime: true,
+        },
+      },
+    };
+  }
+
   if (buildEnv.APPLE_CERTIFICATE) {
     return {
       bundle: {

@@ -47,9 +47,9 @@ brew trust Gloomysunday28/mr-kit
 brew install --cask mr-kit
 ```
 
-Homebrew cask 读取 GitHub Release 里的 dmg。CI 会使用 Developer ID 证书签名并公证 macOS 包，避免下载后被 Gatekeeper 提示移到废纸篓。
+Homebrew cask 读取 GitHub Release 里的 dmg。CI 默认对 macOS 包做 ad-hoc 签名，避免发布裸 unsigned 包；首次打开仍可能被 Gatekeeper 提示未识别开发者，需要在「隐私与安全」里允许打开。
 
-发布前先准备 Apple Developer 的 `Developer ID Application` `.p12` 证书，并配置 GitHub Secrets。支持 Apple ID app-specific password：
+如果要做到下载后无额外拦截，需要使用 Developer ID 证书签名并公证。发布前先准备 Apple Developer 的 `Developer ID Application` `.p12` 证书，并配置 GitHub Secrets。支持 Apple ID app-specific password：
 
 ```bash
 brew install gh
@@ -73,6 +73,8 @@ APPLE_API_ISSUER="issuer-uuid" \
 APPLE_API_KEY_P8_PATH=/path/to/AuthKey_KEYID12345.p8 \
 npm run release:secrets
 ```
+
+配置 Developer ID 后，把 `.github/workflows/release.yml` 里的 `MR_KIT_ADHOC_SIGN` 改为 Developer ID 签名/公证流程。
 
 发布新版本时，先同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和 `Casks/mr-kit.rb` 的版本号，然后推 tag：
 
