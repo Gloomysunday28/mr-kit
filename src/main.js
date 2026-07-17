@@ -979,8 +979,8 @@ function renderWebuiPill() {
     return;
   }
   if (state.webuiPending) {
-    pill.textContent = "界面已更新";
-    pill.title = `新界面 ${state.webuiPending} 已就绪，点击立即生效`;
+    pill.textContent = "正在应用界面";
+    pill.title = `新界面 ${state.webuiPending} 已安装，正在刷新`;
   }
 }
 
@@ -989,9 +989,9 @@ async function renderWebuiVersion() {
   if (!el) return;
   try {
     const info = await invoke("webui_current");
-    el.textContent = info?.version ? `界面 ${info.version}` : "内置";
+    el.textContent = info?.version ? `已自动应用 ${info.version}` : "内置 · 自动应用";
   } catch {
-    el.textContent = "内置";
+    el.textContent = "内置 · 自动应用";
   }
 }
 
