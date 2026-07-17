@@ -1,0 +1,47 @@
+name: WebUI Hot Update
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: webui-hot-update
+  cancel-in-progress: true
+
+jobs:
+  publish-webui:
+    name: Publish webui bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build webui bundle
+        run: node scripts/build-webui.mjs
+
+      - name: Publish to rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view webui --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create webui \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --title "WebUI hot updates" \
+              --notes "前端热更新滚动通道，客户端自动拉取。资产由 CI 覆盖更新，勿手动改动。"
+          # 先传 html 再传 json：客户端以 json 为准，避免拿到新清单配旧包
+          gh release upload webui dist-webui/webui.html --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload webui dist-webui/webui.json --repo "$GITHUB_REPOSITORY" --clobber

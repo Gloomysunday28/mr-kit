@@ -126,6 +126,32 @@ fn installed_homebrew_cask_version(cask: &str) -> Result<Option<String>, String>
         .map(|version| version.to_string()))
 }
 
+/// 确认 Release 上对应架构的 dmg 已经存在。
+/// cask 版本号先于 CI 打包完成出现在 tap 里时，避免提示一个还下载不到的更新。
+fn release_asset_available(version: &str) -> bool {
+    if version.is_empty() {
+        return false;
+    }
+    let arch = if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        "x64"
+    };
+    let url = format!(
+        "https://github.com/Gloomysunday28/mr-kit/releases/download/v{version}/MR-Kit_{version}_{arch}.dmg"
+    );
+    match run_cmd(
+        "curl",
+        &[
+            "-sIL", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10", &url,
+        ],
+        None,
+    ) {
+        Ok(out) => out.ok && out.stdout.trim() == "200",
+        Err(_) => false,
+    }
+}
+
 fn homebrew_cask_current_version(cask: &str) -> Result<String, String> {
     let info = run_cmd("brew", &["info", "--cask", "--json=v2", cask], None)?;
     if !info.ok {
@@ -155,6 +181,9 @@ async fn check_homebrew_update(cask: String) -> Result<Option<AppUpdateInfo>, St
     let installed_version = installed_homebrew_cask_version(cask)?;
     let current_info_version = homebrew_cask_current_version(cask)?;
     if installed_version.is_none() {
+        if !release_asset_available(&current_info_version) {
+            return Ok(None);
+        }
         return Ok(Some(AppUpdateInfo {
             cask: cask.to_string(),
             version: String::new(),
@@ -193,6 +222,9 @@ async fn check_homebrew_update(cask: String) -> Result<Option<AppUpdateInfo>, St
         .or(installed_version.as_deref())
         .unwrap_or("")
         .to_string();
+    if !release_asset_available(&current_version) {
+        return Ok(None);
+    }
     Ok(Some(AppUpdateInfo {
         cask: cask.to_string(),
         version,
@@ -233,6 +265,166 @@ async fn install_homebrew_update(app: AppHandle, cask: String) -> Result<(), Str
         app.exit(0);
     } else {
         app.restart();
+    }
+    Ok(())
+}
+
+/* ---------- 前端热更新 ---------- */
+
+const WEBUI_MANIFEST_URL: &str =
+    "https://github.com/Gloomysunday28/mr-kit/releases/download/webui/webui.json";
+const WEBUI_HTML_URL: &str =
+    "https://github.com/Gloomysunday28/mr-kit/releases/download/webui/webui.html";
+
+#[derive(Serialize, Deserialize, Clone)]
+struct WebuiManifest {
+    version: String,
+    sha256: String,
+    #[serde(rename = "minAppVersion", default)]
+    min_app_version: String,
+    /// 下载该包时的 app 版本；app 升级后内置前端更新，旧热更包作废
+    #[serde(rename = "appVersion", default)]
+    app_version: String,
+}
+
+#[derive(Serialize)]
+struct WebuiInfo {
+    version: String,
+    html: String,
+}
+
+fn webui_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法定位应用数据目录：{e}"))?
+        .join("webui"))
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(data)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// "0.10.0" 风格版本比较；解析失败按 0 处理
+fn version_at_least(current: &str, required: &str) -> bool {
+    let parse = |s: &str| -> Vec<u64> {
+        s.trim()
+            .trim_start_matches('v')
+            .split('.')
+            .map(|p| p.trim().parse().unwrap_or(0))
+            .collect()
+    };
+    let cur = parse(current);
+    let req = parse(required);
+    for i in 0..cur.len().max(req.len()) {
+        let c = cur.get(i).copied().unwrap_or(0);
+        let r = req.get(i).copied().unwrap_or(0);
+        if c != r {
+            return c > r;
+        }
+    }
+    true
+}
+
+/// 读取本地已安装的热更包；校验失败或 app 已升级则清除并回退内置前端
+fn installed_webui(app: &AppHandle) -> Option<(WebuiManifest, String)> {
+    let dir = webui_dir(app).ok()?;
+    let manifest: WebuiManifest =
+        serde_json::from_str(&fs::read_to_string(dir.join("manifest.json")).ok()?).ok()?;
+    if manifest.app_version != env!("CARGO_PKG_VERSION") {
+        let _ = fs::remove_dir_all(&dir);
+        return None;
+    }
+    let html = fs::read_to_string(dir.join("current.html")).ok()?;
+    if sha256_hex(html.as_bytes()) != manifest.sha256.to_lowercase() {
+        let _ = fs::remove_dir_all(&dir);
+        return None;
+    }
+    Some((manifest, html))
+}
+
+#[tauri::command]
+async fn webui_current(app: AppHandle) -> Option<WebuiInfo> {
+    if cfg!(debug_assertions) {
+        return None;
+    }
+    let (manifest, html) = installed_webui(&app)?;
+    Some(WebuiInfo {
+        version: manifest.version,
+        html,
+    })
+}
+
+#[tauri::command]
+async fn check_webui_update(app: AppHandle) -> Result<Option<String>, String> {
+    if cfg!(debug_assertions) {
+        return Ok(None);
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("初始化网络客户端失败：{e}"))?;
+    let manifest: WebuiManifest = client
+        .get(WEBUI_MANIFEST_URL)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("获取界面更新清单失败：{e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("解析界面更新清单失败：{e}"))?;
+    if manifest.version.is_empty() || manifest.sha256.is_empty() {
+        return Err("界面更新清单缺少版本或校验值".to_string());
+    }
+    // 新前端可能依赖新的 Rust 命令；app 版本不够就不热更，等完整升级
+    if !manifest.min_app_version.is_empty()
+        && !version_at_least(env!("CARGO_PKG_VERSION"), &manifest.min_app_version)
+    {
+        return Ok(None);
+    }
+    if let Some((installed, _)) = installed_webui(&app) {
+        if installed.version == manifest.version {
+            return Ok(None);
+        }
+    }
+    let html = client
+        .get(WEBUI_HTML_URL)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("下载界面更新失败：{e}"))?
+        .text()
+        .await
+        .map_err(|e| format!("读取界面更新失败：{e}"))?;
+    if sha256_hex(html.as_bytes()) != manifest.sha256.to_lowercase() {
+        return Err("界面更新校验失败（sha256 不匹配）".to_string());
+    }
+    let dir = webui_dir(&app)?;
+    fs::create_dir_all(&dir).map_err(|e| format!("创建热更新目录失败：{e}"))?;
+    let tmp = dir.join("current.html.tmp");
+    fs::write(&tmp, &html).map_err(|e| format!("写入界面更新失败：{e}"))?;
+    fs::rename(&tmp, dir.join("current.html")).map_err(|e| format!("写入界面更新失败：{e}"))?;
+    let stored = WebuiManifest {
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        ..manifest
+    };
+    fs::write(
+        dir.join("manifest.json"),
+        serde_json::to_string(&stored).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("写入界面更新清单失败：{e}"))?;
+    Ok(Some(stored.version))
+}
+
+#[tauri::command]
+async fn webui_reset(app: AppHandle) -> Result<(), String> {
+    let dir = webui_dir(&app)?;
+    if dir.exists() {
+        fs::remove_dir_all(&dir).map_err(|e| format!("清除界面热更新失败：{e}"))?;
     }
     Ok(())
 }
@@ -1577,6 +1769,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_homebrew_update,
             install_homebrew_update,
+            webui_current,
+            check_webui_update,
+            webui_reset,
             pick_directory,
             git_info,
             watch_repo,

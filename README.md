@@ -76,14 +76,24 @@ npm run release:secrets
 
 配置 Developer ID 后，把 `.github/workflows/release.yml` 里的 `MR_KIT_ADHOC_SIGN` 改为 Developer ID 签名/公证流程。
 
-发布新版本时，先同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 和 `Casks/mr-kit.rb` 的版本号，然后推 tag：
+发布新版本时，先同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 的版本号（**不要手动改 `Casks/mr-kit.rb`**），然后推 tag：
 
 ```bash
 git tag v0.10.0
 git push origin v0.10.0
 ```
 
-GitHub Actions 会自动打包 macOS `aarch64` / `x64` dmg 并挂到对应 Release。
+GitHub Actions 会自动打包 macOS `aarch64` / `x64` dmg 并挂到对应 Release，随后由 CI 更新 `Casks/mr-kit.rb` 的版本号并推回 main——cask 必须在安装包就绪后才更新，否则客户端会在 dmg 存在前收到升级提示。
+
+## 前端热更新
+
+`src/**` 推到 main 后，CI（`webui.yml`）会把 `index.html` + `styles.css` + `main.js` 内联成单个 `webui.html`，连同 sha256 清单挂到滚动 Release `webui` 上。客户端启动后及每 30 分钟检查一次，下载校验通过后顶栏出现「界面已更新」，点击即重载生效，无需发包。
+
+规则：
+
+- 纯前端改动推 main 即热更；**动了 Rust 命令且前端用到的改动必须发完整版本**，并把 `src/webui-compat.json` 的 `minAppVersion` 提到该版本，防止旧 app 加载不兼容的新前端。
+- app 完整升级后本地热更包自动作废（内置前端不老于任何旧热更包），下个周期会重新拉取最新热更。
+- 设置 → 更新里可查看当前界面版本（内置/热更）并「恢复内置界面」。
 
 ## 使用流程
 

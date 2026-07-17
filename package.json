@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:webui": "node scripts/build-webui.mjs",
     "dev": "vite src --host 127.0.0.1 --port 1420 --strictPort",
     "release:secrets": "node scripts/set-macos-release-secrets.mjs",
     "tauri": "tauri"

@@ -15,7 +15,27 @@
     <link rel="stylesheet" href="styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MR Kit</title>
-    <script type="module" src="/main.js" defer></script>
+    <!-- webui-bootstrap-start：打热更包时此块会被替换为内联的 main.js -->
+    <script type="module">
+      let hot = null;
+      if (!window.__mrkitHotLoaded) {
+        try {
+          hot = await window.__TAURI__.core.invoke("webui_current");
+        } catch {}
+      }
+      if (hot?.html?.trimStart().toLowerCase().startsWith("<!doctype")) {
+        window.__mrkitHotLoaded = hot.version;
+        document.open();
+        document.write(hot.html);
+        document.close();
+      } else {
+        const s = document.createElement("script");
+        s.type = "module";
+        s.src = "/main.js";
+        document.head.appendChild(s);
+      }
+    </script>
+    <!-- webui-bootstrap-end -->
   </head>
 
   <body>
@@ -26,6 +46,7 @@
       <div class="topbar-right" data-tauri-drag-region>
         <span id="glab-badge" class="lamp-status" data-tauri-drag-region><i class="lamp" data-tauri-drag-region></i>glab</span>
         <button id="topbar-update" class="update-pill" hidden>检查更新…</button>
+        <button id="topbar-webui" class="update-pill" hidden>界面已更新</button>
         <button id="btn-pin-desktop" class="btn text" title="缩小为桌面小窗">缩小</button>
         <button id="btn-settings" class="btn text" title="设置">设置</button>
         <span class="kbd-hint" data-tauri-drag-region title="全局快捷键：唤起 / 隐藏窗口">⌘⇧M</span>
@@ -289,6 +310,11 @@
             <div class="form-row inline-row">
               <label>更新</label>
               <button id="btn-update-check" class="btn">立即检查</button>
+            </div>
+            <div class="form-row inline-row">
+              <label>界面</label>
+              <span id="webui-version" class="dim">内置</span>
+              <button id="btn-webui-reset" class="btn">恢复内置界面</button>
             </div>
             <div class="form-row settings-actions">
               <button id="btn-update-save" class="btn primary">保存</button>

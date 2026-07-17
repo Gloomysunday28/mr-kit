@@ -109,6 +109,7 @@ const state = {
   updateError: "",
   isCheckingUpdate: false,
   isInstallingUpdate: false,
+  webuiPending: null,
 };
 
 /* ---------- 工具 ---------- */
@@ -937,6 +938,51 @@ async function installUpdate() {
   }
 }
 
+/* ---------- 界面热更新 ---------- */
+
+async function checkWebuiUpdate() {
+  if (state.webuiPending) return;
+  try {
+    const version = await invoke("check_webui_update");
+    if (version) {
+      state.webuiPending = version;
+      renderWebuiPill();
+    }
+  } catch {
+    // 静默失败，下个周期再试；手动入口在设置页
+  }
+}
+
+function renderWebuiPill() {
+  const pill = $("topbar-webui");
+  if (!pill) return;
+  pill.hidden = !state.webuiPending;
+  if (state.webuiPending) {
+    pill.textContent = "界面已更新";
+    pill.title = `新界面 ${state.webuiPending} 已就绪，点击立即生效`;
+  }
+}
+
+async function renderWebuiVersion() {
+  const el = $("webui-version");
+  if (!el) return;
+  try {
+    const info = await invoke("webui_current");
+    el.textContent = info?.version ? `热更 ${info.version}` : "内置";
+  } catch {
+    el.textContent = "内置";
+  }
+}
+
+async function resetWebui() {
+  try {
+    await invoke("webui_reset");
+    location.reload();
+  } catch (e) {
+    setError(String(e));
+  }
+}
+
 /* ---------- 设置页 ---------- */
 
 function renderSettings() {
@@ -952,6 +998,7 @@ function renderSettings() {
   $("dingtalk-webhook").value = dingtalk.webhook || dingtalkDefaults.webhook || "";
   $("update-cask").value = update.cask;
   updateProviderFields();
+  renderWebuiVersion();
 }
 
 function showSettingsPage(page) {
@@ -1281,7 +1328,7 @@ async function createMrs() {
 
 /* ---------- 事件绑定 ---------- */
 
-window.addEventListener("DOMContentLoaded", async () => {
+async function bootApp() {
   await loadDingtalkDefaults();
 
   $("btn-add-repo").addEventListener("click", pickDir);
@@ -1315,6 +1362,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
   });
   $("btn-update-install").addEventListener("click", installUpdate);
+  $("topbar-webui").addEventListener("click", () => location.reload());
+  $("btn-webui-reset").addEventListener("click", resetWebui);
   $("btn-update-dismiss").addEventListener("click", () => {
     state.updateInfo = null;
     renderUpdateBanner();
@@ -1447,4 +1496,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
   setTimeout(() => checkForUpdates(), 1200);
   setInterval(() => checkForUpdates(), 1000 * 60 * 60 * 4);
-});
+  setTimeout(() => checkWebuiUpdate(), 3000);
+  setInterval(() => checkWebuiUpdate(), 1000 * 60 * 30);
+}
+
+// main.js 由热更引导脚本动态注入，可能在 DOMContentLoaded 之后才执行
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", bootApp);
+} else {
+  bootApp();
+}
