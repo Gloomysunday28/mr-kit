@@ -1529,7 +1529,11 @@ async function bootApp() {
   setTimeout(() => checkForUpdates(), 1200);
   setInterval(() => checkForUpdates(), 1000 * 60 * 60 * 4);
   setTimeout(() => checkWebuiUpdate(), 3000);
-  setInterval(() => checkWebuiUpdate(), 1000 * 60 * 30);
+  setInterval(() => checkWebuiUpdate(), 1000 * 15);
+  window.addEventListener("focus", () => checkWebuiUpdate());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") checkWebuiUpdate();
+  });
 }
 
 // main.js 由界面更新引导脚本动态注入，可能在 DOMContentLoaded 之后才执行
