@@ -828,6 +828,10 @@ body.compact-mode .settings {
   user-select: text;
 }
 
+/* 官方 diff2html.css 里有 .d2h-code-wrapper { position: relative }，
+   vendored 版本缺失，导致 absolute 定位的行号列锚定到滚动容器外、溢出到下方 UI */
+.d2h-code-wrapper { position: relative; }
+
 .change-diff .d2h-file-header { display: none; }
 
 .change-diff .d2h-file-wrapper { margin-bottom: 0; }
