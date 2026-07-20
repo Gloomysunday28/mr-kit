@@ -1305,3 +1305,5 @@ select {
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--faint); }
+
+/* retrigger webui publish: run #18 cancelled during GitHub Actions outage */
