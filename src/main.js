@@ -4,7 +4,7 @@ const { PhysicalPosition } = window.__TAURI__.dpi;
 const { listen } = window.__TAURI__.event;
 
 const $ = (id) => document.getElementById(id);
-const DEFAULT_TARGET_BRANCHES = ["us-develop", "us-pre", "us-release"];
+const DEFAULT_TARGET_BRANCHES = ["us-develop", "us-pre", "us-release", "main"];
 const DEFAULT_RELEASE_APPROVER = "1p0_lwg0y28tpf";
 const DEFAULT_DOODLE_COLOR = "#ffb454";
 const DINGTALK_CONTACTS = [
@@ -255,7 +255,11 @@ function parseTargetBranches(text) {
 
 function loadTargetBranches() {
   const saved = parseTargetBranches(localStorage.getItem("mrkit.targetBranches") || "");
-  return saved.length ? saved : [...DEFAULT_TARGET_BRANCHES];
+  const branches = saved.length ? saved : [...DEFAULT_TARGET_BRANCHES];
+  for (const branch of DEFAULT_TARGET_BRANCHES) {
+    if (!branches.includes(branch)) branches.push(branch);
+  }
+  return branches;
 }
 
 function saveTargetBranches(branches) {
@@ -1457,6 +1461,12 @@ async function createMrs() {
   const failureDetails = [];
 
   try {
+    status.textContent = "检查工作区…";
+    state.info = await invoke("git_info", { path: state.dir });
+    if (!state.info?.is_repo) {
+      throw new Error(state.info?.error || "该目录不是 Git 仓库");
+    }
+
     await autoCommitDirtyChanges(source, status);
     await pushCurrentSourceIfNeeded(source, status);
 
