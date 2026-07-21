@@ -1314,22 +1314,41 @@ async function generateStagedAiTitle() {
   return title.slice(0, 72);
 }
 
+async function generateHeadAiTitle() {
+  const config = effectiveAiConfig();
+  if (!config) {
+    throw new Error("请先完成 AI 渠道配置");
+  }
+  const title = await invoke("ai_title_from_head", { path: state.dir, config });
+  return title.slice(0, 72);
+}
+
 async function autoCommitDirtyChanges(source, status) {
   if (!state.info?.dirty_count) return "";
   if (source !== state.info.branch) {
     throw new Error("当前工作区有未提交改动，请选择当前分支作为源分支后再发起 MR");
   }
 
+  // 直接先提交本地代码：暂存后立刻用兜底标题提交，不依赖/不等待 AI 或额外的暂存区检测
   status.textContent = "暂存改动…";
   await invoke("stage_all", { path: state.dir });
 
-  status.textContent = "AI 生成提交标题…";
-  const title = await generateStagedAiTitle();
-  $("mr-title").value = title;
-
   status.textContent = "提交改动…";
-  await invoke("commit_staged", { path: state.dir, title });
+  const fallbackTitle = await invoke("fallback_commit_title", { path: state.dir });
+  await invoke("commit_staged", { path: state.dir, title: fallbackTitle });
+  $("mr-title").value = fallbackTitle;
   await refresh();
+
+  // 提交已完成；AI 生成更好的标题是锦上添花，失败也不影响已提交的改动
+  let title = fallbackTitle;
+  try {
+    status.textContent = "AI 生成提交标题…";
+    title = await generateHeadAiTitle();
+    $("mr-title").value = title;
+    await invoke("amend_commit_title", { path: state.dir, title });
+  } catch (_) {
+    // 保留兜底标题，继续后续推送与创建 MR
+  }
   return title;
 }
 

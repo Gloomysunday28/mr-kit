@@ -645,18 +645,12 @@ async fn stash_diff(path: String, rev: String) -> Result<String, String> {
     if rev.is_empty() {
         return Err("stash 标识不能为空".to_string());
     }
+    // --include-untracked 会把 stash 的 untracked 快照一并纳入对比基准，
+    // 部分场景下会导致已跟踪的修改文件被整篇当作新增内容渲染。
+    // 这里只需要按实际改动内容对比，不依赖 stash 的 untracked 机制。
     let out = git(
         &path,
-        &[
-            "-c",
-            "core.quotepath=false",
-            "stash",
-            "show",
-            "--patch",
-            "--include-untracked",
-            "--no-color",
-            rev,
-        ],
+        &["-c", "core.quotepath=false", "stash", "show", "--patch", "--no-color", rev],
     )?;
     if out.ok {
         Ok(out.stdout)
@@ -950,17 +944,9 @@ fn openai_title(path: &str, prompt: &str) -> Result<String, String> {
     }
 }
 
-/// 调用 AI 渠道总结暂存区改动，生成符合 Conventional Commits 的 MR 标题
-#[tauri::command]
-async fn ai_title(path: String, config: AiConfig) -> Result<String, String> {
-    let stat = git(&path, &["diff", "--cached", "--stat"])?;
-    if stat.stdout.is_empty() {
-        return Err("暂存区为空，请先 git add 要提交的文件".to_string());
-    }
-    let diff = git(&path, &["diff", "--cached", "--unified=0"])?;
-
-    let prompt = format!(
-        "根据下面的 git 暂存区改动生成一行 GitLab MR 标题。\
+fn build_ai_title_prompt(stat: &str, diff: &str) -> String {
+    format!(
+        "根据下面的 git 改动生成一行 GitLab MR 标题。\
          标题必须严格符合 Conventional Commits / git commit 规范：type(scope): subject。\
          type 只能从 feat、fix、docs、style、refactor、perf、test、build、ci、chore、revert 中选择。\
          scope 可省略；如果分支或文件能看出模块，优先使用具体模块名，例如 home、mr、settings。\
@@ -972,13 +958,15 @@ async fn ai_title(path: String, config: AiConfig) -> Result<String, String> {
          反例：feat(apps): 更新 style home gap 删除默认的 title 以及 原来的缓存\n\
          正例：feat(home): 调整首页间距并清理默认标题缓存\n\n\
          改动文件：\n{}\n\ndiff（可能被截断）：\n{}",
-        truncate_chars(&stat.stdout, 2000),
-        truncate_chars(&diff.stdout, 6000),
-    );
+        truncate_chars(stat, 2000),
+        truncate_chars(diff, 6000),
+    )
+}
 
+async fn run_ai_title(path: &str, config: &AiConfig, prompt: &str) -> Result<String, String> {
     let text = match config.provider.as_str() {
-        "claude" => claude_title(&path, &prompt)?,
-        "openai" => openai_title(&path, &prompt)?,
+        "claude" => claude_title(path, prompt)?,
+        "openai" => openai_title(path, prompt)?,
         "custom" => {
             if config.base_url.trim().is_empty()
                 || config.api_key.trim().is_empty()
@@ -1028,6 +1016,65 @@ async fn ai_title(path: String, config: AiConfig) -> Result<String, String> {
         return Err("AI 未返回符合 Conventional Commits 的标题，请重试或手动填写".to_string());
     }
     Ok(title)
+}
+
+/// 调用 AI 渠道总结暂存区改动，生成符合 Conventional Commits 的 MR 标题
+#[tauri::command]
+async fn ai_title(path: String, config: AiConfig) -> Result<String, String> {
+    let stat = git(&path, &["diff", "--cached", "--stat"])?;
+    if stat.stdout.is_empty() {
+        return Err("暂存区为空，请先 git add 要提交的文件".to_string());
+    }
+    let diff = git(&path, &["diff", "--cached", "--unified=0"])?;
+    let prompt = build_ai_title_prompt(&stat.stdout, &diff.stdout);
+    run_ai_title(&path, &config, &prompt).await
+}
+
+/// 调用 AI 渠道总结最近一次提交（HEAD）的改动，用于本地代码已直接提交后再补一个更好的标题
+#[tauri::command]
+async fn ai_title_from_head(path: String, config: AiConfig) -> Result<String, String> {
+    let stat = git(&path, &["show", "--stat", "--format=", "HEAD"])?;
+    if stat.stdout.trim().is_empty() {
+        return Err("没有可总结的最近提交".to_string());
+    }
+    let diff = git(&path, &["show", "--format=", "--unified=0", "HEAD"])?;
+    let prompt = build_ai_title_prompt(&stat.stdout, &diff.stdout);
+    run_ai_title(&path, &config, &prompt).await
+}
+
+/// 不依赖 AI，直接从暂存区文件列表拟一个兜底提交标题，保证「先提交」这一步不被 AI/网络阻塞
+#[tauri::command]
+async fn fallback_commit_title(path: String) -> Result<String, String> {
+    let stat = git(&path, &["diff", "--cached", "--name-status"])?;
+    if stat.stdout.trim().is_empty() {
+        return Err("暂存区为空，没有可提交的改动".to_string());
+    }
+    let files: Vec<&str> = stat
+        .stdout
+        .lines()
+        .filter_map(|line| line.split_whitespace().last())
+        .collect();
+    let title = match files.as_slice() {
+        [] => "chore: 更新本地改动".to_string(),
+        [one] => format!("chore: 更新 {one}"),
+        [first, rest @ ..] => format!("chore: 更新 {first} 等 {} 个文件", rest.len() + 1),
+    };
+    Ok(truncate_chars(&title, 72).to_string())
+}
+
+/// 用 AI 生成的标题替换刚刚那次「先提交」的 commit message（仅在推送前调用，不涉及已推送的历史）
+#[tauri::command]
+async fn amend_commit_title(path: String, title: String) -> Result<String, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("提交标题不能为空".to_string());
+    }
+    let out = git(&path, &["commit", "--amend", "-m", title])?;
+    if out.ok {
+        Ok(format!("{}\n{}", out.stdout, out.stderr).trim().to_string())
+    } else {
+        Err(command_error("git commit --amend 失败", &out))
+    }
 }
 
 #[tauri::command]
@@ -1936,6 +1983,9 @@ pub fn run() {
             git_fetch,
             commits_between,
             ai_title,
+            ai_title_from_head,
+            fallback_commit_title,
+            amend_commit_title,
             stage_all,
             commit_staged,
             push_branch,
