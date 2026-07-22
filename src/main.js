@@ -1392,6 +1392,23 @@ function transcriptNotice(label, ok, text) {
   return li;
 }
 
+function mrIidFromUrl(url) {
+  const m = String(url || "").match(/\/merge_requests\/(\d+)/);
+  return m ? m[1] : "";
+}
+
+// us-develop 不用别人审，创建完直接自己点「通过」
+async function autoApproveMr(url) {
+  const iid = mrIidFromUrl(url);
+  if (!iid) return { ok: false, text: "未解析到 MR 编号，未自动通过" };
+  try {
+    await invoke("approve_mr", { path: state.dir, iid });
+    return { ok: true, text: `已自动通过 !${iid}` };
+  } catch (e) {
+    return { ok: false, text: compactMessage(String(e), 160) };
+  }
+}
+
 async function notifyApprover(target, source, title, url) {
   const config = effectiveDingtalkConfig();
   if (!config) {
@@ -1510,7 +1527,13 @@ async function createMrs() {
             createdUrls.push(r.url);
             if (target === PRIMARY_COPY_TARGET) primaryUrl = r.url;
           }
-          if (target !== PRIMARY_COPY_TARGET) {
+          if (target === PRIMARY_COPY_TARGET) {
+            const approved = await autoApproveMr(r.url);
+            results.appendChild(transcriptNotice("自动通过", approved.ok, approved.text));
+            if (!approved.ok) {
+              failureDetails.push(`自动通过: ${approved.text}`);
+            }
+          } else {
             const notice = await notifyApprover(target, source, title, r.url);
             results.appendChild(transcriptNotice("钉钉", notice.ok, notice.text));
             if (!notice.ok) {
