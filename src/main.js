@@ -5,6 +5,8 @@ const { listen } = window.__TAURI__.event;
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_TARGET_BRANCHES = ["us-develop", "us-pre", "us-release", "main"];
+// 创建完成后只把这个目标分支的 MR 链接写进剪贴板
+const PRIMARY_COPY_TARGET = "us-develop";
 const DEFAULT_RELEASE_APPROVER = "1p0_lwg0y28tpf";
 const DEFAULT_DOODLE_COLOR = "#ffb454";
 const DINGTALK_CONTACTS = [
@@ -1458,6 +1460,7 @@ async function createMrs() {
   let failed = 0;
   let skipped = 0;
   const createdUrls = [];
+  let primaryUrl = "";
   const failureDetails = [];
 
   try {
@@ -1503,8 +1506,11 @@ async function createMrs() {
         results.appendChild(transcriptItem(target, r.ok, r.url, r.output));
         if (r.ok) {
           created += 1;
-          if (r.url) createdUrls.push(r.url);
-          if (target !== "us-develop") {
+          if (r.url) {
+            createdUrls.push(r.url);
+            if (target === PRIMARY_COPY_TARGET) primaryUrl = r.url;
+          }
+          if (target !== PRIMARY_COPY_TARGET) {
             const notice = await notifyApprover(target, source, title, r.url);
             results.appendChild(transcriptNotice("钉钉", notice.ok, notice.text));
             if (!notice.ok) {
@@ -1529,8 +1535,10 @@ async function createMrs() {
     ]
       .filter(Boolean)
       .join("，");
-    const copied = await copyText(createdUrls.join("\n"));
-    let copyHint = createdUrls.length ? (copied ? "，链接已复制" : "，链接复制失败") : "";
+    // 只复制 us-develop 的链接；没有它时退化为第一条创建成功的链接
+    const copyUrl = primaryUrl || createdUrls[0] || "";
+    const copied = await copyText(copyUrl);
+    let copyHint = copyUrl ? (copied ? "，链接已复制" : "，链接复制失败") : "";
     if (failed && !createdUrls.length && failureDetails.length) {
       const copiedErrors = await copyText(failureDetails.join("\n\n"));
       copyHint = copiedErrors ? "，错误详情已复制" : "";
