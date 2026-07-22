@@ -1340,6 +1340,28 @@ async fn approve_mr(path: String, iid: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn merge_mr(path: String, iid: String) -> Result<String, String> {
+    let out = run_cmd("glab", &["mr", "merge", &iid, "--yes"], Some(&path))?;
+    if out.ok {
+        return Ok(format!("{}\n{}", out.stdout, out.stderr).trim().to_string());
+    }
+    // 流水线还没跑完时 GitLab 会拒绝直接合并，退化成「流水线成功后自动合并」
+    let combined = format!("{}\n{}", out.stdout, out.stderr).to_lowercase();
+    if combined.contains("pipeline") {
+        let auto = run_cmd(
+            "glab",
+            &["mr", "merge", &iid, "--auto-merge", "--yes"],
+            Some(&path),
+        )?;
+        if auto.ok {
+            return Ok(format!("已设置流水线成功后自动合并 !{iid}"));
+        }
+        return Err(command_error("MR 合并失败", &auto));
+    }
+    Err(command_error("MR 合并失败", &out))
+}
+
+#[tauri::command]
 async fn close_mr(path: String, iid: String) -> Result<String, String> {
     let out = run_cmd("glab", &["mr", "close", &iid], Some(&path))?;
     if out.ok {
@@ -1993,6 +2015,7 @@ pub fn run() {
             create_mr,
             open_branch_mrs,
             approve_mr,
+            merge_mr,
             close_mr,
             dingtalk_defaults,
             notify_dingtalk_approval,

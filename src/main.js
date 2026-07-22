@@ -735,7 +735,7 @@ function renderBranchMrs(mrs) {
       const conflict = mr.hasConflicts ? `<span class="mr-conflict">冲突</span>` : "";
       const label = `!${esc(mr.iid)} → ${esc(mr.targetBranch || "-")}`;
       const title = `${label} ${mr.title || ""}`.trim();
-      return `<div class="mr-row ${mr.hasConflicts ? "conflict" : ""}" title="${esc(title)}"><button class="mr-open" data-url="${esc(mr.url || "")}"><span class="mr-main"><span class="mr-id">${label}</span><span class="mr-title">${esc(shortTitle(mr.title, 68))}</span></span>${conflict}</button><span class="mr-actions"><button class="mr-action approve" data-mr-action="approve" data-iid="${esc(mr.iid)}">通过</button><button class="mr-action close" data-mr-action="close" data-iid="${esc(mr.iid)}">关闭</button></span></div>`;
+      return `<div class="mr-row ${mr.hasConflicts ? "conflict" : ""}" title="${esc(title)}"><button class="mr-open" data-url="${esc(mr.url || "")}"><span class="mr-main"><span class="mr-id">${label}</span><span class="mr-title">${esc(shortTitle(mr.title, 68))}</span></span>${conflict}</button><span class="mr-actions"><button class="mr-action approve" data-mr-action="approve" data-iid="${esc(mr.iid)}">合并</button><button class="mr-action close" data-mr-action="close" data-iid="${esc(mr.iid)}">关闭</button></span></div>`;
     })
     .join("");
 }
@@ -1397,13 +1397,24 @@ function mrIidFromUrl(url) {
   return m ? m[1] : "";
 }
 
-// us-develop 不用别人审，创建完直接自己点「通过」
-async function autoApproveMr(url) {
-  const iid = mrIidFromUrl(url);
-  if (!iid) return { ok: false, text: "未解析到 MR 编号，未自动通过" };
+// 项目没开审批（GitLab 免费版）时 approve 会直接报错，忽略它继续合并
+async function approveQuietly(iid) {
   try {
     await invoke("approve_mr", { path: state.dir, iid });
-    return { ok: true, text: `已自动通过 !${iid}` };
+  } catch (_) {
+    // 审批不是必需项，失败与否都交给 merge 决定
+  }
+}
+
+// us-develop 不用别人审，创建完直接合掉
+async function autoMergeMr(url) {
+  const iid = mrIidFromUrl(url);
+  if (!iid) return { ok: false, text: "未解析到 MR 编号，未自动合并" };
+  await approveQuietly(iid);
+  try {
+    const out = await invoke("merge_mr", { path: state.dir, iid });
+    const text = compactMessage(String(out || ""), 120);
+    return { ok: true, text: text.includes("自动合并") ? text : `已自动合并 !${iid}` };
   } catch (e) {
     return { ok: false, text: compactMessage(String(e), 160) };
   }
@@ -1438,13 +1449,16 @@ async function handleMrAction(btn) {
   if (!iid) return;
   const originalText = btn.textContent;
   btn.disabled = true;
-  btn.textContent = action === "approve" ? "通过中…" : "关闭中…";
+  btn.textContent = action === "approve" ? "合并中…" : "关闭中…";
   setError("");
   try {
-    await invoke(action === "approve" ? "approve_mr" : "close_mr", {
-      path: state.dir,
-      iid,
-    });
+    if (action === "approve") {
+      // 「通过」= 审批（有就走）+ 合并，合完 MR 会从列表里消失
+      await approveQuietly(iid);
+      await invoke("merge_mr", { path: state.dir, iid });
+    } else {
+      await invoke("close_mr", { path: state.dir, iid });
+    }
     await refreshBranchMrs(state.info?.branch);
   } catch (e) {
     setError(String(e));
@@ -1528,10 +1542,10 @@ async function createMrs() {
             if (target === PRIMARY_COPY_TARGET) primaryUrl = r.url;
           }
           if (target === PRIMARY_COPY_TARGET) {
-            const approved = await autoApproveMr(r.url);
-            results.appendChild(transcriptNotice("自动通过", approved.ok, approved.text));
-            if (!approved.ok) {
-              failureDetails.push(`自动通过: ${approved.text}`);
+            const merged = await autoMergeMr(r.url);
+            results.appendChild(transcriptNotice("自动合并", merged.ok, merged.text));
+            if (!merged.ok) {
+              failureDetails.push(`自动合并: ${merged.text}`);
             }
           } else {
             const notice = await notifyApprover(target, source, title, r.url);
