@@ -78,7 +78,22 @@ body {
   -webkit-user-select: none; /* WKWebView 只认带前缀写法 */
   user-select: none;
   cursor: default;
-  overflow-x: hidden;
+  /* 纵向布局：顶栏固定不动，内容区各自内部滚动 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 顶栏与横幅固定在顶部，不随内容滚动 */
+.topbar,
+.update-banner { flex: 0 0 auto; }
+
+/* 内容区：占满剩余高度并在内部纵向滚动 */
+.empty,
+.board {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .doodle-canvas {
