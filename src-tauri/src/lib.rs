@@ -1166,9 +1166,21 @@ struct MrResult {
 struct BranchMr {
     iid: String,
     title: String,
+    source_branch: String,
     target_branch: String,
     url: String,
     has_conflicts: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MergeMrResult {
+    merged: bool,
+    has_conflicts: bool,
+    conflict_prepared: bool,
+    branch: String,
+    conflicted_files: Vec<String>,
+    output: String,
 }
 
 #[derive(Deserialize)]
@@ -1283,6 +1295,11 @@ fn branch_mr_from_json(path: &str, project: &str, item: &serde_json::Value) -> B
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
+        source_branch: item
+            .get("source_branch")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         target_branch: item
             .get("target_branch")
             .and_then(|v| v.as_str())
@@ -1329,6 +1346,205 @@ async fn open_branch_mrs(
         .collect())
 }
 
+fn sanitize_branch_part(value: &str) -> String {
+    let mut result = String::new();
+    let mut last_was_dash = false;
+    for ch in value.chars() {
+        let valid = ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.');
+        if valid {
+            result.push(ch);
+            last_was_dash = false;
+        } else if !last_was_dash {
+            result.push('-');
+            last_was_dash = true;
+        }
+    }
+    result
+        .trim_matches(|ch| ch == '-' || ch == '.')
+        .to_string()
+}
+
+fn conflict_branch_name(source: &str, target: &str) -> Result<String, String> {
+    let lane = match target {
+        "us-develop" => "dev".to_string(),
+        "us-pre" => "pre".to_string(),
+        "us-release" => "release".to_string(),
+        other => sanitize_branch_part(other),
+    };
+    if lane.is_empty() || source.trim().is_empty() {
+        return Err("特征分支或目标分支名称无效".to_string());
+    }
+    Ok(format!("merge-{lane}/{}", source.trim()))
+}
+
+fn mr_is_conflicted(path: &str, remote: &str, iid: &str) -> bool {
+    let remote_url = match git(path, &["remote", "get-url", remote]) {
+        Ok(out) if out.ok => out.stdout,
+        _ => return false,
+    };
+    let Some(project) = project_path_from_remote(&remote_url) else {
+        return false;
+    };
+    let endpoint = format!("projects/{}/merge_requests/{}", url_encode(&project), iid);
+    match run_cmd("glab", &["api", &endpoint], Some(path)) {
+        Ok(out) if out.ok => serde_json::from_str::<serde_json::Value>(&out.stdout)
+            .map(|json| mr_has_conflicts(&json))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn prepare_conflict_merge(
+    path: &str,
+    remote: &str,
+    source: &str,
+    target: &str,
+) -> Result<MergeMrResult, String> {
+    if remote.trim().is_empty() || source.trim().is_empty() || target.trim().is_empty() {
+        return Err("缺少远程、特征分支或目标分支，无法准备冲突处理分支".to_string());
+    }
+
+    let status = git(path, &["status", "--porcelain"])?;
+    if !status.ok {
+        return Err(command_error("读取工作区状态失败", &status));
+    }
+    if !status.stdout.trim().is_empty() {
+        return Err("当前工作区有未提交改动，请先提交或暂存后再处理 MR 冲突".to_string());
+    }
+
+    let fetch = git(path, &["fetch", remote, "--prune"])?;
+    if !fetch.ok {
+        return Err(command_error("更新远程分支失败", &fetch));
+    }
+
+    let target_ref = format!("{remote}/{target}");
+    let verify_target = git(path, &["rev-parse", "--verify", &target_ref])?;
+    if !verify_target.ok {
+        return Err(format!("远程目标分支 {target_ref} 不存在"));
+    }
+
+    let current = git(path, &["branch", "--show-current"])?.stdout;
+    let remote_source = format!("{remote}/{source}");
+    let source_ref = if current == source {
+        source.to_string()
+    } else {
+        let verify_remote_source = git(path, &["rev-parse", "--verify", &remote_source])?;
+        if verify_remote_source.ok {
+            remote_source
+        } else {
+            let verify_local_source = git(path, &["rev-parse", "--verify", source])?;
+            if !verify_local_source.ok {
+                return Err(format!("找不到特征分支 {source} 或 {remote}/{source}"));
+            }
+            source.to_string()
+        }
+    };
+
+    let branch = conflict_branch_name(source, target)?;
+    let branch_ref = format!("refs/heads/{branch}");
+    let exists = git(path, &["show-ref", "--verify", "--quiet", &branch_ref])?;
+    if exists.ok {
+        return Err(format!(
+            "本地分支 {branch} 已存在，请处理或删除它后再重新准备该目标分支"
+        ));
+    }
+    let switch = git(
+        path,
+        &["switch", "--no-track", "-c", &branch, &target_ref],
+    )?;
+    if !switch.ok {
+        return Err(command_error("创建冲突处理分支失败", &switch));
+    }
+
+    let merge = git(path, &["merge", "--no-edit", &source_ref])?;
+    if merge.ok {
+        return Ok(MergeMrResult {
+            merged: false,
+            has_conflicts: true,
+            conflict_prepared: true,
+            branch: branch.clone(),
+            conflicted_files: Vec::new(),
+            output: format!(
+                "已从 {target_ref} 创建 {branch}，并合入 {source_ref}；本地未复现冲突"
+            ),
+        });
+    }
+
+    let conflicted = git(path, &["diff", "--name-only", "--diff-filter=U"])?;
+    let conflicted_files: Vec<String> = conflicted
+        .stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.to_string())
+        .collect();
+    if !conflicted_files.is_empty() {
+        return Ok(MergeMrResult {
+            merged: false,
+            has_conflicts: true,
+            conflict_prepared: true,
+            branch: branch.clone(),
+            output: format!(
+                "已从 {target_ref} 创建 {branch}，并合入 {source_ref}；{} 个冲突文件已留在工作区",
+                conflicted_files.len()
+            ),
+            conflicted_files,
+        });
+    }
+
+    let merge_error = command_error("合并特征分支失败", &merge);
+    let _ = git(path, &["merge", "--abort"]);
+    if !current.is_empty() {
+        let _ = git(path, &["switch", &current]);
+    }
+    let _ = git(path, &["branch", "-D", &branch]);
+    Err(merge_error)
+}
+
+#[tauri::command]
+async fn complete_conflict_merge(path: String) -> Result<String, String> {
+    let unresolved = git(&path, &["diff", "--name-only", "--diff-filter=U"])?;
+    let unresolved_files: Vec<&str> = unresolved
+        .stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    if !unresolved_files.is_empty() {
+        let check = git(&path, &["diff", "--check"])?;
+        let check_output = format!("{}\n{}", check.stdout, check.stderr).to_lowercase();
+        if check_output.contains("leftover conflict marker") {
+            return Err(format!(
+                "还有 {} 个文件保留冲突标记，解决后再处理下一个目标分支",
+                unresolved_files.len()
+            ));
+        }
+        let stage = git(&path, &["add", "--all"])?;
+        if !stage.ok {
+            return Err(command_error("暂存冲突解决结果失败", &stage));
+        }
+    }
+
+    let merge_head = git(&path, &["rev-parse", "--verify", "-q", "MERGE_HEAD"])?;
+    if merge_head.ok {
+        let stage = git(&path, &["add", "--all"])?;
+        if !stage.ok {
+            return Err(command_error("暂存冲突解决结果失败", &stage));
+        }
+        let commit = git(&path, &["commit", "--no-verify", "--no-edit"])?;
+        if !commit.ok {
+            return Err(command_error("提交冲突解决结果失败", &commit));
+        }
+        return Ok(format!("{}\n{}", commit.stdout, commit.stderr)
+            .trim()
+            .to_string());
+    }
+
+    let status = git(&path, &["status", "--porcelain"])?;
+    if !status.stdout.trim().is_empty() {
+        return Err("当前冲突分支还有未提交改动，请先提交后再处理下一个目标分支".to_string());
+    }
+    Ok("当前冲突分支已完成".to_string())
+}
+
 #[tauri::command]
 async fn approve_mr(path: String, iid: String) -> Result<String, String> {
     let out = run_cmd("glab", &["mr", "approve", &iid], Some(&path))?;
@@ -1340,13 +1556,55 @@ async fn approve_mr(path: String, iid: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn merge_mr(path: String, iid: String) -> Result<String, String> {
+async fn merge_mr(
+    path: String,
+    iid: String,
+    remote: String,
+    source: String,
+    target: String,
+    has_conflicts: bool,
+    prepare_conflicts: bool,
+) -> Result<MergeMrResult, String> {
+    if has_conflicts {
+        if prepare_conflicts {
+            return prepare_conflict_merge(&path, &remote, &source, &target);
+        }
+        return Ok(MergeMrResult {
+            merged: false,
+            has_conflicts: true,
+            conflict_prepared: false,
+            branch: String::new(),
+            conflicted_files: Vec::new(),
+            output: format!("!{iid} 存在冲突，等待串行处理"),
+        });
+    }
+
     let out = run_cmd("glab", &["mr", "merge", &iid, "--yes"], Some(&path))?;
     if out.ok {
-        return Ok(format!("{}\n{}", out.stdout, out.stderr).trim().to_string());
+        return Ok(MergeMrResult {
+            merged: true,
+            has_conflicts: false,
+            conflict_prepared: false,
+            branch: String::new(),
+            conflicted_files: Vec::new(),
+            output: format!("{}\n{}", out.stdout, out.stderr).trim().to_string(),
+        });
     }
     // 流水线还没跑完时 GitLab 会拒绝直接合并，退化成「流水线成功后自动合并」
     let combined = format!("{}\n{}", out.stdout, out.stderr).to_lowercase();
+    if combined.contains("conflict") || mr_is_conflicted(&path, &remote, &iid) {
+        if prepare_conflicts {
+            return prepare_conflict_merge(&path, &remote, &source, &target);
+        }
+        return Ok(MergeMrResult {
+            merged: false,
+            has_conflicts: true,
+            conflict_prepared: false,
+            branch: String::new(),
+            conflicted_files: Vec::new(),
+            output: format!("!{iid} 存在冲突，等待串行处理"),
+        });
+    }
     if combined.contains("pipeline") {
         let auto = run_cmd(
             "glab",
@@ -1354,7 +1612,14 @@ async fn merge_mr(path: String, iid: String) -> Result<String, String> {
             Some(&path),
         )?;
         if auto.ok {
-            return Ok(format!("已设置流水线成功后自动合并 !{iid}"));
+            return Ok(MergeMrResult {
+                merged: true,
+                has_conflicts: false,
+                conflict_prepared: false,
+                branch: String::new(),
+                conflicted_files: Vec::new(),
+                output: format!("已设置流水线成功后自动合并 !{iid}"),
+            });
         }
         return Err(command_error("MR 合并失败", &auto));
     }
@@ -2016,6 +2281,7 @@ pub fn run() {
             open_branch_mrs,
             approve_mr,
             merge_mr,
+            complete_conflict_merge,
             close_mr,
             dingtalk_defaults,
             notify_dingtalk_approval,

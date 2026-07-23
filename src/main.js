@@ -116,6 +116,12 @@ const state = {
   stashDiffLoading: false,
   activeChangedFile: "",
   changedDiffLoading: false,
+  conflictQueue: [],
+  activeConflict: null,
+  conflictSource: "",
+  conflictMrs: [],
+  conflictProcessed: new Set(),
+  isPreparingConflict: false,
   webuiPending: null,
   webuiProgress: null,
   isCheckingWebui: false,
@@ -351,6 +357,7 @@ function switchRepo(dir) {
   state.dir = dir;
   state.targets = loadTargets(dir);
   state.dingtalkRecipients = loadDingtalkRecipients(dir);
+  resetConflictQueue();
   localStorage.setItem("mrkit.dir", dir);
   $("mr-title").value = "";
   $("commit-preview").innerHTML = "";
@@ -378,6 +385,7 @@ function removeRepo() {
     state.info = null;
     state.targets = new Set();
     state.dingtalkRecipients = new Set([DEFAULT_RELEASE_APPROVER]);
+    resetConflictQueue();
     localStorage.removeItem("mrkit.dir");
     $("workspace").hidden = true;
     $("empty-state").hidden = false;
@@ -735,9 +743,113 @@ function renderBranchMrs(mrs) {
       const conflict = mr.hasConflicts ? `<span class="mr-conflict">冲突</span>` : "";
       const label = `!${esc(mr.iid)} → ${esc(mr.targetBranch || "-")}`;
       const title = `${label} ${mr.title || ""}`.trim();
-      return `<div class="mr-row ${mr.hasConflicts ? "conflict" : ""}" title="${esc(title)}"><button class="mr-open" data-url="${esc(mr.url || "")}"><span class="mr-main"><span class="mr-id">${label}</span><span class="mr-title">${esc(shortTitle(mr.title, 68))}</span></span>${conflict}</button><span class="mr-actions"><button class="mr-action approve" data-mr-action="approve" data-iid="${esc(mr.iid)}">合并</button><button class="mr-action close" data-mr-action="close" data-iid="${esc(mr.iid)}">关闭</button></span></div>`;
+      const mergeLabel = mr.hasConflicts ? "处理冲突" : "合并";
+      return `<div class="mr-row ${mr.hasConflicts ? "conflict" : ""}" title="${esc(title)}"><button class="mr-open" data-url="${esc(mr.url || "")}"><span class="mr-main"><span class="mr-id">${label}</span><span class="mr-title">${esc(shortTitle(mr.title, 68))}</span></span>${conflict}</button><span class="mr-actions"><button class="mr-action approve" data-mr-action="approve" data-iid="${esc(mr.iid)}" data-source="${esc(mr.sourceBranch || state.info?.branch || "")}" data-target="${esc(mr.targetBranch || "")}" data-conflict="${mr.hasConflicts ? "1" : "0"}">${mergeLabel}</button><button class="mr-action close" data-mr-action="close" data-iid="${esc(mr.iid)}">关闭</button></span></div>`;
     })
     .join("");
+}
+
+function conflictMrKey(mr) {
+  return String(mr?.iid || `${mr?.sourceBranch || ""}:${mr?.targetBranch || ""}`);
+}
+
+function resetConflictQueue() {
+  state.conflictQueue = [];
+  state.activeConflict = null;
+  state.conflictSource = "";
+  state.conflictMrs = [];
+  state.conflictProcessed = new Set();
+  state.isPreparingConflict = false;
+  renderConflictQueue();
+}
+
+function renderConflictQueue() {
+  const btn = $("btn-next-conflict");
+  if (!btn) return;
+  const hasNext = Boolean(state.activeConflict) && state.conflictQueue.length > 0;
+  btn.hidden = !hasNext;
+  btn.disabled = state.isPreparingConflict;
+  btn.classList.toggle("loading", state.isPreparingConflict);
+  btn.textContent = state.isPreparingConflict
+    ? "准备中…"
+    : `处理下一个冲突 (${state.conflictQueue.length})  ⌘⇧N`;
+}
+
+async function prepareNextConflict(completeCurrent = false) {
+  if (state.isPreparingConflict || state.conflictQueue.length === 0) return false;
+  const next = state.conflictQueue[0];
+  let prepared = false;
+  state.isPreparingConflict = true;
+  renderConflictQueue();
+  setError("");
+
+  try {
+    if (completeCurrent && state.activeConflict) {
+      await invoke("complete_conflict_merge", { path: state.dir });
+    }
+
+    const result = await invoke("merge_mr", {
+      path: state.dir,
+      iid: String(next.iid || ""),
+      remote: state.info?.remote_name || "origin",
+      source: next.sourceBranch || state.conflictSource,
+      target: next.targetBranch,
+      hasConflicts: true,
+      prepareConflicts: true,
+    });
+    if (!result.conflictPrepared) {
+      throw new Error(result.output || "冲突处理分支准备失败");
+    }
+
+    state.conflictQueue.shift();
+    state.conflictProcessed.add(conflictMrKey(next));
+    state.activeConflict = {
+      ...next,
+      branch: result.branch,
+    };
+    prepared = true;
+    $("mr-results").appendChild(transcriptNotice("冲突处理", true, result.output));
+    await refresh();
+    await notifyUser("MR Kit：冲突分支已准备", result.output);
+  } catch (e) {
+    setError(String(e));
+  } finally {
+    state.isPreparingConflict = false;
+    renderConflictQueue();
+  }
+  return prepared;
+}
+
+async function syncConflictQueue(mrs, source) {
+  const conflicts = mrs.filter((mr) => mr.hasConflicts);
+
+  if (
+    state.activeConflict &&
+    source !== state.conflictSource &&
+    source !== state.activeConflict.branch
+  ) {
+    resetConflictQueue();
+  }
+
+  if (state.activeConflict && source === state.activeConflict.branch) {
+    renderConflictQueue();
+    return;
+  }
+
+  if (!state.conflictSource || state.conflictSource !== source) {
+    resetConflictQueue();
+    state.conflictSource = source;
+  }
+
+  state.conflictMrs = conflicts;
+  state.conflictQueue = conflicts.filter(
+    (mr) => !state.conflictProcessed.has(conflictMrKey(mr))
+  );
+  renderConflictQueue();
+
+  if (!state.activeConflict && state.conflictQueue.length > 0) {
+    await prepareNextConflict(false);
+  }
 }
 
 async function refreshBranchMrs(branch = state.info?.branch) {
@@ -752,6 +864,7 @@ async function refreshBranchMrs(branch = state.info?.branch) {
       source: branch,
     });
     renderBranchMrs(mrs);
+    await syncConflictQueue(mrs, branch);
   } catch (e) {
     holder.className = "branch-mrs error";
     holder.textContent = "MR ?";
@@ -1407,14 +1520,38 @@ async function approveQuietly(iid) {
 }
 
 // us-develop 不用别人审，创建完直接合掉
-async function autoMergeMr(url) {
+async function autoMergeMr(url, remote, source, target) {
   const iid = mrIidFromUrl(url);
   if (!iid) return { ok: false, text: "未解析到 MR 编号，未自动合并" };
   await approveQuietly(iid);
   try {
-    const out = await invoke("merge_mr", { path: state.dir, iid });
-    const text = compactMessage(String(out || ""), 120);
-    return { ok: true, text: text.includes("自动合并") ? text : `已自动合并 !${iid}` };
+    const result = await invoke("merge_mr", {
+      path: state.dir,
+      iid,
+      remote,
+      source,
+      target,
+      hasConflicts: false,
+      prepareConflicts: false,
+    });
+    if (result.hasConflicts) {
+      return {
+        ok: true,
+        prepared: false,
+        conflicted: true,
+        text: compactMessage(result.output, 180),
+      };
+    }
+    if (result.conflictPrepared) {
+      return {
+        ok: true,
+        prepared: true,
+        branch: result.branch,
+        text: compactMessage(result.output, 180),
+      };
+    }
+    const text = compactMessage(result.output || "", 120);
+    return { ok: true, prepared: false, text: text.includes("自动合并") ? text : `已自动合并 !${iid}` };
   } catch (e) {
     return { ok: false, text: compactMessage(String(e), 160) };
   }
@@ -1444,18 +1581,74 @@ async function notifyApprover(target, source, title, url) {
 
 async function handleMrAction(btn) {
   if (!state.dir) return;
+  if (state.isPreparingConflict) return;
   const action = btn.dataset.mrAction;
   const iid = btn.dataset.iid;
   if (!iid) return;
+  const source = btn.dataset.source || state.info?.branch || "";
+  const target = btn.dataset.target || "";
+  const hasConflicts = btn.dataset.conflict === "1";
+  const remote = state.info?.remote_name || "origin";
   const originalText = btn.textContent;
   btn.disabled = true;
-  btn.textContent = action === "approve" ? "合并中…" : "关闭中…";
+  btn.textContent = action === "approve" ? (hasConflicts ? "准备中…" : "合并中…") : "关闭中…";
   setError("");
   try {
     if (action === "approve") {
-      // 「通过」= 审批（有就走）+ 合并，合完 MR 会从列表里消失
-      await approveQuietly(iid);
-      await invoke("merge_mr", { path: state.dir, iid });
+      if (hasConflicts) {
+        if (state.activeConflict) {
+          setError("请先解决当前冲突分支，再处理下一个目标分支");
+          btn.disabled = false;
+          btn.textContent = originalText;
+          return;
+        }
+        const selected = state.conflictMrs.find((mr) => String(mr.iid) === String(iid)) || {
+          iid,
+          sourceBranch: source,
+          targetBranch: target,
+          hasConflicts: true,
+        };
+        const rest = state.conflictMrs.filter(
+          (mr) => conflictMrKey(mr) !== conflictMrKey(selected) && mr.hasConflicts
+        );
+        state.conflictSource = source;
+        state.conflictQueue = [selected, ...rest].filter(
+          (mr) => !state.conflictProcessed.has(conflictMrKey(mr))
+        );
+        const prepared = await prepareNextConflict(false);
+        if (!prepared) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+        return;
+      }
+      if (!hasConflicts) {
+        await approveQuietly(iid);
+      }
+      const result = await invoke("merge_mr", {
+        path: state.dir,
+        iid,
+        remote,
+        source,
+        target,
+        hasConflicts,
+        prepareConflicts: false,
+      });
+      if (result.hasConflicts) {
+        state.conflictSource = source;
+        state.conflictQueue = [{
+          iid,
+          sourceBranch: source,
+          targetBranch: target,
+          hasConflicts: true,
+        }];
+        const prepared = await prepareNextConflict(false);
+        if (!prepared) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+        return;
+      }
     } else {
       await invoke("close_mr", { path: state.dir, iid });
     }
@@ -1542,8 +1735,9 @@ async function createMrs() {
             if (target === PRIMARY_COPY_TARGET) primaryUrl = r.url;
           }
           if (target === PRIMARY_COPY_TARGET) {
-            const merged = await autoMergeMr(r.url);
-            results.appendChild(transcriptNotice("自动合并", merged.ok, merged.text));
+            const merged = await autoMergeMr(r.url, remote, source, target);
+            const mergeLabel = merged.conflicted ? "冲突队列" : merged.prepared ? "冲突处理" : "自动合并";
+            results.appendChild(transcriptNotice(mergeLabel, merged.ok, merged.text));
             if (!merged.ok) {
               failureDetails.push(`自动合并: ${merged.text}`);
             }
@@ -1654,6 +1848,14 @@ async function bootApp() {
   });
   $("ai-provider").addEventListener("change", updateProviderFields);
   $("btn-create").addEventListener("click", createMrs);
+  $("btn-next-conflict").addEventListener("click", () => prepareNextConflict(true));
+  document.addEventListener("keydown", (e) => {
+    if (!(e.metaKey || e.ctrlKey) || !e.shiftKey || e.key.toLowerCase() !== "n") return;
+    const btn = $("btn-next-conflict");
+    if (btn.hidden || btn.disabled) return;
+    e.preventDefault();
+    prepareNextConflict(true);
+  });
   $("source-branch").addEventListener("change", () => {
     renderCompact();
     syncTrayContext();
