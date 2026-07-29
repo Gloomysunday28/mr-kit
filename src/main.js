@@ -112,6 +112,7 @@ const state = {
   isCheckingUpdate: false,
   isInstallingUpdate: false,
   stashes: [],
+  stashSyncInFlight: false,
   activeStashRev: "",
   stashDiffLoading: false,
   activeChangedFile: "",
@@ -503,6 +504,22 @@ function renderStashes(error = "") {
     .join("");
 }
 
+function renderStashSummary() {
+  const summary = $("git-summary");
+  if (!summary) return;
+  let segment = summary.querySelector(".seg.stash");
+  if (!state.stashes.length) {
+    segment?.remove();
+    return;
+  }
+  if (!segment) {
+    segment = document.createElement("span");
+    segment.className = "seg stash";
+    summary.append(segment);
+  }
+  segment.textContent = `stash ${state.stashes.length}`;
+}
+
 function renderDiffHtml(patch, options = {}) {
   if (!window.Diff2Html?.html) {
     throw new Error("diff2html 组件未加载");
@@ -578,8 +595,10 @@ async function openChangedFileDiff(file) {
 }
 
 async function loadStashes() {
+  const dir = state.dir;
   try {
-    const stashes = await invoke("list_stashes", { path: state.dir });
+    const stashes = await invoke("list_stashes", { path: dir });
+    if (state.dir !== dir) return [];
     state.stashes = stashes;
     if (state.activeStashRev && !stashes.some((stash) => stash.rev === state.activeStashRev)) {
       state.activeStashRev = "";
@@ -589,10 +608,36 @@ async function loadStashes() {
     renderStashes();
     return stashes;
   } catch (e) {
+    if (state.dir !== dir) return [];
     state.stashes = [];
     state.activeStashRev = "";
     renderStashes(String(e));
     return [];
+  }
+}
+
+async function syncStashes() {
+  if (!state.dir || state.stashSyncInFlight || document.visibilityState !== "visible") return;
+  const dir = state.dir;
+  state.stashSyncInFlight = true;
+  try {
+    const stashes = await invoke("list_stashes", { path: dir });
+    if (state.dir !== dir) return;
+    const before = JSON.stringify(state.stashes);
+    const after = JSON.stringify(stashes);
+    if (before === after) return;
+    state.stashes = stashes;
+    if (state.activeStashRev && !stashes.some((stash) => stash.rev === state.activeStashRev)) {
+      state.activeStashRev = "";
+      $("stash-diff").hidden = true;
+      $("stash-diff").innerHTML = "";
+    }
+    renderStashes();
+    renderStashSummary();
+  } catch {
+    // 原生仓库监听仍是主通道；定时兜底失败时保留当前显示，等待下次同步。
+  } finally {
+    state.stashSyncInFlight = false;
   }
 }
 
@@ -1993,9 +2038,16 @@ async function bootApp() {
   setInterval(() => checkForUpdates(), 1000 * 60 * 60 * 4);
   setTimeout(() => checkWebuiUpdate(), 3000);
   setInterval(() => checkWebuiUpdate(), 1000 * 15);
-  window.addEventListener("focus", () => checkWebuiUpdate());
+  setInterval(() => syncStashes(), 2000);
+  window.addEventListener("focus", () => {
+    checkWebuiUpdate();
+    syncStashes();
+  });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") checkWebuiUpdate();
+    if (document.visibilityState === "visible") {
+      checkWebuiUpdate();
+      syncStashes();
+    }
   });
 }
 
