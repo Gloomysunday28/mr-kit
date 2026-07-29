@@ -111,6 +111,7 @@ const state = {
   updateError: "",
   isCheckingUpdate: false,
   isInstallingUpdate: false,
+  allStashes: [],
   stashes: [],
   stashSyncInFlight: false,
   activeStashRev: "",
@@ -520,6 +521,17 @@ function renderStashSummary() {
   segment.textContent = `stash ${state.stashes.length}`;
 }
 
+function filterStashesByBranch(branch) {
+  state.stashes = state.allStashes.filter((stash) => stash.branch === branch);
+  if (state.activeStashRev && !state.stashes.some((stash) => stash.rev === state.activeStashRev)) {
+    state.activeStashRev = "";
+    $("stash-diff").hidden = true;
+    $("stash-diff").innerHTML = "";
+  }
+  renderStashes();
+  renderStashSummary();
+}
+
 function renderDiffHtml(patch, options = {}) {
   if (!window.Diff2Html?.html) {
     throw new Error("diff2html 组件未加载");
@@ -594,21 +606,17 @@ async function openChangedFileDiff(file) {
   }
 }
 
-async function loadStashes() {
+async function loadStashes(branch = state.info?.branch || "") {
   const dir = state.dir;
   try {
     const stashes = await invoke("list_stashes", { path: dir });
     if (state.dir !== dir) return [];
-    state.stashes = stashes;
-    if (state.activeStashRev && !stashes.some((stash) => stash.rev === state.activeStashRev)) {
-      state.activeStashRev = "";
-      $("stash-diff").hidden = true;
-      $("stash-diff").innerHTML = "";
-    }
-    renderStashes();
-    return stashes;
+    state.allStashes = stashes;
+    filterStashesByBranch(branch);
+    return state.stashes;
   } catch (e) {
     if (state.dir !== dir) return [];
+    state.allStashes = [];
     state.stashes = [];
     state.activeStashRev = "";
     renderStashes(String(e));
@@ -623,17 +631,11 @@ async function syncStashes() {
   try {
     const stashes = await invoke("list_stashes", { path: dir });
     if (state.dir !== dir) return;
-    const before = JSON.stringify(state.stashes);
+    const before = JSON.stringify(state.allStashes);
     const after = JSON.stringify(stashes);
     if (before === after) return;
-    state.stashes = stashes;
-    if (state.activeStashRev && !stashes.some((stash) => stash.rev === state.activeStashRev)) {
-      state.activeStashRev = "";
-      $("stash-diff").hidden = true;
-      $("stash-diff").innerHTML = "";
-    }
-    renderStashes();
-    renderStashSummary();
+    state.allStashes = stashes;
+    filterStashesByBranch($("source-branch")?.value || state.info?.branch || "");
   } catch {
     // 原生仓库监听仍是主通道；定时兜底失败时保留当前显示，等待下次同步。
   } finally {
@@ -1902,6 +1904,7 @@ async function bootApp() {
     prepareNextConflict(true);
   });
   $("source-branch").addEventListener("change", () => {
+    filterStashesByBranch($("source-branch").value);
     renderCompact();
     syncTrayContext();
   });
