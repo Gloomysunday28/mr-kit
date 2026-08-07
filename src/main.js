@@ -100,6 +100,7 @@ const state = {
   targets: new Set(),
   dingtalkRecipients: new Set([DEFAULT_RELEASE_APPROVER]),
   isCreating: false,
+  cancelCreationRequested: false,
   desktopPinned: localStorage.getItem("mrkit.desktopPinned") === "1",
   dingtalkDefaults: null,
   doodleEnabled: localStorage.getItem("mrkit.doodle.enabled") === "1",
@@ -429,9 +430,13 @@ function renderCompact() {
   $("compact-source").textContent = source || branch;
   $("compact-branch").textContent = branch;
   $("compact-target-summary").textContent = selectedTargetsLabel();
-  $("compact-create").disabled = state.isCreating || !state.dir || state.targets.size === 0;
+  $("compact-create").disabled = !state.isCreating && (!state.dir || state.targets.size === 0);
   $("compact-create").classList.toggle("loading", state.isCreating);
-  $("compact-create").textContent = state.isCreating ? "创建中…" : "发起 MR";
+  $("compact-create").textContent = state.isCreating
+    ? state.cancelCreationRequested
+      ? "正在取消…"
+      : "取消发起"
+    : "发起 MR";
 }
 
 function syncTrayContext() {
@@ -939,15 +944,36 @@ async function doFetch() {
 function updateDispatchButton() {
   const n = state.targets.size;
   const btn = $("btn-create");
-  btn.disabled = state.isCreating || n === 0;
+  btn.disabled = !state.isCreating && n === 0;
   btn.classList.toggle("loading", state.isCreating);
-  btn.textContent = state.isCreating ? "创建中…" : n === 0 ? "发起 MR" : `发起 ${n} 条 MR`;
+  btn.textContent = state.isCreating
+    ? state.cancelCreationRequested
+      ? "正在取消…"
+      : "取消发起"
+    : n === 0
+      ? "发起 MR"
+      : `发起 ${n} 条 MR`;
   renderCompact();
 }
 
 function setCreating(creating) {
   state.isCreating = creating;
   updateDispatchButton();
+}
+
+function requestCancelCreation() {
+  if (!state.isCreating || state.cancelCreationRequested) return;
+  state.cancelCreationRequested = true;
+  $("create-status").textContent = "正在取消，当前步骤结束后停止…";
+  updateDispatchButton();
+}
+
+function ensureCreationContinues() {
+  if (state.cancelCreationRequested) {
+    const error = new Error("MR 发起已取消");
+    error.cancelled = true;
+    throw error;
+  }
 }
 
 function toggleTarget(btn) {
@@ -1489,36 +1515,50 @@ async function generateHeadAiTitle() {
   return title.slice(0, 72);
 }
 
-async function autoCommitDirtyChanges(source, status) {
+async function autoCommitDirtyChanges(source, status, preferredTitle = "") {
   if (!state.info?.dirty_count) return "";
   if (source !== state.info.branch) {
     throw new Error("当前工作区有未提交改动，请选择当前分支作为源分支后再发起 MR");
   }
 
-  // 直接先提交本地代码：暂存后立刻用兜底标题提交，不依赖/不等待 AI 或额外的暂存区检测
+  ensureCreationContinues();
   status.textContent = "暂存改动…";
   await invoke("stage_all", { path: state.dir });
+  ensureCreationContinues();
 
+  if (preferredTitle) {
+    status.textContent = "使用手写标题提交改动…";
+    await invoke("commit_staged", { path: state.dir, title: preferredTitle });
+    await refresh();
+    ensureCreationContinues();
+    return preferredTitle;
+  }
+
+  // 没有手写标题时先安全提交，再交给 Luna 总结并在推送前修正标题。
   status.textContent = "提交改动…";
   const fallbackTitle = await invoke("fallback_commit_title", { path: state.dir });
   await invoke("commit_staged", { path: state.dir, title: fallbackTitle });
   $("mr-title").value = fallbackTitle;
   await refresh();
+  ensureCreationContinues();
 
   // 提交已完成；AI 生成更好的标题是锦上添花，失败也不影响已提交的改动
   let title = fallbackTitle;
   try {
-    status.textContent = "AI 生成提交标题…";
+    status.textContent = "Luna 正在总结标题…";
     title = await generateHeadAiTitle();
+    ensureCreationContinues();
     $("mr-title").value = title;
     await invoke("amend_commit_title", { path: state.dir, title });
-  } catch (_) {
+  } catch (error) {
+    if (error?.cancelled) throw error;
     // 保留兜底标题，继续后续推送与创建 MR
   }
   return title;
 }
 
 async function pushCurrentSourceIfNeeded(source, status) {
+  ensureCreationContinues();
   if (source !== state.info?.branch) return;
   if (state.info.has_upstream && state.info.ahead === 0) return;
 
@@ -1529,6 +1569,7 @@ async function pushCurrentSourceIfNeeded(source, status) {
     branch: source,
   });
   await refresh();
+  ensureCreationContinues();
 }
 
 function transcriptItem(target, ok, url, output) {
@@ -1708,7 +1749,10 @@ async function handleMrAction(btn) {
 }
 
 async function createMrs() {
-  if (state.isCreating) return;
+  if (state.isCreating) {
+    requestCancelCreation();
+    return;
+  }
   setError("");
   const results = $("mr-results");
   const status = $("create-status");
@@ -1723,6 +1767,8 @@ async function createMrs() {
     return;
   }
 
+  const inputTitle = $("mr-title").value.trim();
+  state.cancelCreationRequested = false;
   setCreating(true);
   status.textContent = "准备创建…";
   results.innerHTML = "";
@@ -1737,16 +1783,25 @@ async function createMrs() {
   try {
     status.textContent = "检查工作区…";
     state.info = await invoke("git_info", { path: state.dir });
+    ensureCreationContinues();
     if (!state.info?.is_repo) {
       throw new Error(state.info?.error || "该目录不是 Git 仓库");
     }
 
-    await autoCommitDirtyChanges(source, status);
+    await autoCommitDirtyChanges(source, status, inputTitle);
     await pushCurrentSourceIfNeeded(source, status);
 
-    let title = $("mr-title").value.trim();
+    let title = inputTitle || $("mr-title").value.trim();
     if (!title) {
-      await suggestTitle();
+      status.textContent = "Luna 正在总结标题…";
+      try {
+        title = await generateHeadAiTitle();
+        $("mr-title").value = title;
+      } catch (error) {
+        if (error?.cancelled) throw error;
+        await suggestTitle();
+      }
+      ensureCreationContinues();
       title = $("mr-title").value.trim();
     }
     if (!title) {
@@ -1756,11 +1811,13 @@ async function createMrs() {
     const targets = [...state.targets];
     const remote = state.info.remote_name || "origin";
     for (let i = 0; i < targets.length; i++) {
+      ensureCreationContinues();
       const target = targets[i];
       status.textContent = `${target} (${i + 1}/${targets.length})…`;
       // 预检：目标..源 无提交差异则跳过，不让 glab 报错
       try {
         const commits = await invoke("commits_between", { path: state.dir, remote, target, source });
+        ensureCreationContinues();
         if (commits.length === 0) {
           const li = document.createElement("li");
           li.className = "skip";
@@ -1769,7 +1826,8 @@ async function createMrs() {
           skipped += 1;
           continue;
         }
-      } catch (_) {
+      } catch (error) {
+        if (error?.cancelled) throw error;
         // 预检失败不拦截，交给 glab 判断
       }
       try {
@@ -1781,8 +1839,10 @@ async function createMrs() {
             createdUrls.push(r.url);
             if (target === PRIMARY_COPY_TARGET) primaryUrl = r.url;
           }
+          ensureCreationContinues();
           if (target === PRIMARY_COPY_TARGET) {
             const merged = await autoMergeMr(r.url, remote, source, target);
+            ensureCreationContinues();
             const mergeLabel = merged.conflicted ? "冲突队列" : merged.prepared ? "冲突处理" : "自动合并";
             results.appendChild(transcriptNotice(mergeLabel, merged.ok, merged.text));
             if (!merged.ok) {
@@ -1790,6 +1850,7 @@ async function createMrs() {
             }
           } else {
             const notice = await notifyApprover(target, source, title, r.url);
+            ensureCreationContinues();
             results.appendChild(transcriptNotice("钉钉", notice.ok, notice.text));
             if (!notice.ok) {
               failureDetails.push(`钉钉: ${notice.text}`);
@@ -1800,12 +1861,14 @@ async function createMrs() {
           failureDetails.push(failureDetail(target, r.output));
         }
       } catch (e) {
+        if (e?.cancelled) throw e;
         const message = String(e);
         results.appendChild(transcriptItem(target, false, "", message));
         failed += 1;
         failureDetails.push(failureDetail(target, message));
       }
     }
+    ensureCreationContinues();
     const detail = [
       created ? `${created} 条 MR 已就绪` : "",
       skipped ? `${skipped} 条跳过` : "",
@@ -1826,18 +1889,26 @@ async function createMrs() {
       setError(failureDetails[0]);
     }
     await refreshBranchMrs(source);
+    ensureCreationContinues();
     await notifyUser(
       failed ? "MR Kit：创建完成，有失败" : "MR Kit：创建完成",
       `${detail || "没有可创建的 MR"}${copyHint}${failureHint}`
     );
   } catch (e) {
+    if (e?.cancelled || state.cancelCreationRequested) {
+      status.textContent = "已取消";
+      await notifyUser("MR Kit：已取消", "已停止后续 MR 发起步骤");
+      return;
+    }
     const message = String(e);
     setError(message);
     const copied = await copyText(message);
     await notifyUser("MR Kit：创建失败", copied ? compactError(message) : "操作失败，请回到 MR Kit 查看详情");
   } finally {
-    status.textContent = "";
+    const cancelled = state.cancelCreationRequested;
+    state.cancelCreationRequested = false;
     setCreating(false);
+    status.textContent = cancelled ? "已取消" : "";
   }
 }
 
